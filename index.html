@@ -327,7 +327,9 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
     <div id="tab-schedule" class="tab-content">
       <div class="toolbar">
         <span style="font-size:11px;color:var(--text2)">Распределение по дням</span>
+        <span style="font-size:10px;color:var(--text3)" id="overrideBadge"></span>
         <div style="display:flex;gap:6px;margin-left:auto">
+          <button class="btn-out" style="color:var(--orange);border-color:rgba(247,147,79,.3)" onclick="clearAllOverrides()" id="clearOverridesBtn" title="Сбросить все ручные правки">↺ Сбросить правки</button>
           <button class="btn-out" style="color:#1d6f42;border-color:rgba(29,111,66,.4)" onclick="exportSchedXLSX()">⬇ Excel</button>
           <button class="btn-out" style="color:#c0392b;border-color:rgba(192,57,43,.4)" onclick="exportSchedPDF()">⬇ PDF</button>
         </div>
@@ -1418,6 +1420,7 @@ async function genPlan(){
   // Always reload fresh from storage before calculating
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
   extraProducts = JSON.parse(localStorage.getItem('kp_extra_products') || '[]');
+  planOverrides = JSON.parse(localStorage.getItem('kp_plan_overrides')||'{}');
   buildABCCache(); // refresh ABC classes from history
   const btn=document.getElementById('genBtn');
   btn.classList.add('ld'); btn.disabled=true;
@@ -1459,14 +1462,25 @@ function addAI(text){
 
 function buildPlan(needs,activeDaysList){
   const plan={}; activeDaysList.forEach(d=>plan[d.key]=[]);
+  const catDay=getCatDay();
   for(const p of needs){
     if(p.needed<=0)continue;
-    const pref=getCatDay()[p.cat]||[];
-    let placed=false;
-    for(const dk of pref){if(plan[dk]!==undefined){plan[dk].push(p);placed=true;break;}}
-    if(!placed&&activeDaysList[0])plan[activeDaysList[0].key].push(p);
+    // Find preferred days that are actually active
+    const pref=(catDay[p.cat]||[]).filter(dk=>plan[dk]!==undefined);
+    if(pref.length>0){
+      // Place in ALL matching active days (same qty — kitchen produces for that category day)
+      pref.forEach(dk=>plan[dk].push(p));
+    }
+    // If no matching day found — leave unscheduled (don't dump into day 0)
+    // It will show as "не распределено" warning
   }
   return plan;
+}
+
+// Get products that have no assigned day in the plan
+function getUnscheduled(needs,plan){
+  const scheduled=new Set(Object.values(plan).flat().map(p=>p.code));
+  return needs.filter(p=>p.needed>0&&!scheduled.has(p.code));
 }
 
 function renderPlan(needs,activeDaysList){
@@ -1542,20 +1556,99 @@ function renderPlan(needs,activeDaysList){
   area.innerHTML=h;
 }
 
+// planOverrides: { productCode: { dayKey: qty } } — manual edits to the plan
+let planOverrides = JSON.parse(localStorage.getItem('kp_plan_overrides')||'{}');
+
 function renderSched(plan,activeDaysList){
   const area=document.getElementById('schedArea');
-  let h='<div class="sched-grid">';
+  const needs=calcNeeds();
+  const unscheduled=getUnscheduled(needs,plan);
+
+  let h='';
+
+  // Warning for unscheduled items
+  if(unscheduled.length){
+    h+='<div style="background:rgba(247,147,79,.08);border:1px solid rgba(247,147,79,.3);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px">'
+     +'<strong style="color:var(--orange)">⚠️ '+unscheduled.length+' позиций не распределены по дням</strong> — их категория не назначена ни на один активный день.<br>'
+     +'<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">'
+     +unscheduled.map(p=>`<span style="background:rgba(167,139,250,.12);color:#a78bfa;padding:2px 8px;border-radius:4px;font-size:10px">${p.name.substring(0,30)} <strong>(${p.needed})</strong></span>`).join('')
+     +'</div>'
+     +'<div style="margin-top:8px;font-size:10px;color:var(--text3)">→ Нажмите ⚙️ Изменить в сайдбаре чтобы назначить категорию на день</div>'
+     +'</div>';
+  }
+
+  h+='<div class="sched-grid">';
   for(const d of activeDaysList){
     const items=(plan[d.key]||[]).filter(p=>p.needed>0);
+    const cats=(getMeatSchedule()[d.key]||[]);
     h+=`<div class="dcard" style="border-top-color:${d.color}">
-      <div class="dcard-head"><span class="dcard-title">${d.full}</span>
-        <span class="mpill" style="background:${d.color}22;color:${d.color};font-size:9px">${(getMeatSchedule()[d.key]||[]).join(', ')||d.meat}</span></div>
-      ${!items.length?'<div style="font-size:10px;color:var(--text3);font-style:italic">Нет позиций</div>':
-        items.map(p=>`<div class="dcrow"><div class="dcn" title="${p.name}">${p.name}</div><div class="dcq">${p.needed}</div></div>`).join('')}
-      ${items.length?`<div class="dcard-foot"><span>${items.length} поз.</span><span>${items.reduce((s,p)=>s+p.needed,0)} ед.</span></div>`:''}
-    </div>`;
+      <div class="dcard-head">
+        <span class="dcard-title">${d.full}</span>
+        <span class="mpill" style="background:${d.color}22;color:${d.color};font-size:9px">${cats.join(', ')||'—'}</span>
+      </div>`;
+
+    if(!items.length){
+      h+='<div style="font-size:10px;color:var(--text3);font-style:italic">Нет позиций</div>';
+    } else {
+      h+=items.map(p=>{
+        const ov=(planOverrides[p.code]||{})[d.key];
+        const displayQty=ov!==undefined?ov:p.needed;
+        return `<div class="dcrow" style="align-items:center">
+          <div class="dcn" title="${p.name}">${p.name}</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" min="0"
+              value="${displayQty}"
+              style="width:56px;background:var(--bg3);border:1px solid ${ov!==undefined?'var(--orange)':'var(--border)'};border-radius:5px;
+                     padding:3px 5px;color:${ov!==undefined?'var(--orange)':'var(--text)'};
+                     font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center;outline:none"
+              onchange="setPlanOverride('${p.code}','${d.key}',this.value)"
+              title="${ov!==undefined?'Изменено вручную (оригинал: '+p.needed+')':'Нажмите чтобы изменить'}">
+            ${ov!==undefined?`<span title="Сбросить" onclick="clearOverride('${p.code}','${d.key}')"
+              style="cursor:pointer;color:var(--text3);font-size:11px;padding:2px 4px;border-radius:3px;border:1px solid var(--border)"
+              onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">↺</span>`:''}
+          </div>
+        </div>`;
+      }).join('');
+      const totalDisplay=items.reduce((s,p)=>{
+        const ov=(planOverrides[p.code]||{})[d.key];
+        return s+(ov!==undefined?ov:p.needed);
+      },0);
+      h+=`<div class="dcard-foot"><span>${items.length} поз.</span><span style="color:var(--green)">${totalDisplay} ед.</span></div>`;
+    }
+    h+='</div>';
   }
-  h+='</div>'; area.innerHTML=h;
+  h+='</div>';
+  area.innerHTML=h;
+}
+
+function setPlanOverride(code, dayKey, val){
+  const qty=Number(val)||0;
+  if(!planOverrides[code]) planOverrides[code]={};
+  planOverrides[code][dayKey]=qty;
+  localStorage.setItem('kp_plan_overrides',JSON.stringify(planOverrides));
+  // Update footer total
+  const dcard=document.querySelector(`[data-day="${dayKey}"]`);
+}
+
+function clearOverride(code, dayKey){
+  if(planOverrides[code]) delete planOverrides[code][dayKey];
+  if(planOverrides[code]&&!Object.keys(planOverrides[code]).length) delete planOverrides[code];
+  localStorage.setItem('kp_plan_overrides',JSON.stringify(planOverrides));
+  if(planResult){
+    const activeDaysList=DAYS.filter(d=>activeDays[d.key]);
+    renderSched(planResult,activeDaysList);
+  }
+}
+
+function clearAllOverrides(){
+  if(!confirm('Сбросить все ручные изменения плана?')) return;
+  planOverrides={};
+  localStorage.removeItem('kp_plan_overrides');
+  if(planResult){
+    const activeDaysList=DAYS.filter(d=>activeDays[d.key]);
+    renderSched(planResult,activeDaysList);
+  }
+  toast('Все изменения сброшены','warn');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1989,7 +2082,11 @@ function exportSchedXLSX(){
     if(!items.length){
       dayAoa.push(['(нет позиций для производства)','','','','']);
     } else {
-      items.forEach(p => dayAoa.push([p.name, p.cat, p.orderTotal||'', p.forecast||'', p.needed]));
+      items.forEach(p => {
+        const ov=(planOverrides[p.code]||{})[d.key];
+        const qty=ov!==undefined?ov:p.needed;
+        dayAoa.push([p.name, p.cat, p.orderTotal||'', p.forecast||'', qty+(ov!==undefined?' *':'')]);
+      });
       dayAoa.push([]);
       dayAoa.push(['ИТОГО','','','', items.reduce((s,p)=>s+p.needed,0)]);
     }
@@ -2337,6 +2434,11 @@ function switchTab(t){
   if(t==='history')renderHistory();
   if(t==='dash')renderDash();
   if(t==='abc')runABCXYZ();
+  if(t==='schedule'){
+    const cnt=Object.values(planOverrides).reduce((s,d)=>s+Object.keys(d).length,0);
+    const badge=document.getElementById('overrideBadge');
+    if(badge) badge.textContent=cnt>0?cnt+' ручных правок':'';
+  }
 }
 function showModal(id){
   document.getElementById(id).style.display='flex';

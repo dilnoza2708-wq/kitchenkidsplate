@@ -1570,8 +1570,8 @@ function handleIIKO(file){
         const code=String(row[0]).trim();
         if(!code||code==='Код')continue;
 
-        const stockQty = Math.max(0, Math.round(parseFloat(String(row[stockCol]).replace(',','.'))||0));
-        const salesQty = Math.max(0, Math.round(parseFloat(String(row[salesCol]).replace(',','.'))||0));
+        const stockQty = Math.abs(Math.round(parseFloat(String(row[stockCol]).replace(',','.').replace(/\s/g,''))||0));
+        const salesQty = Math.abs(Math.round(parseFloat(String(row[salesCol]).replace(',','.').replace(/\s/g,''))||0));
 
         parsedStock[code] = stockQty;
         parsedSales[code] = salesQty;
@@ -2019,7 +2019,7 @@ function handleSalesFile(file){
         const row=rows[i];
         const code=String(row[0]).trim();
         if(!code||code==='Код')continue;
-        const qty=Math.max(0,Math.round(parseFloat(String(row[salesCol]).replace(',','.'))||0));
+        const qty=Math.abs(Math.round(parseFloat(String(row[salesCol]).replace(',','.').replace(/\s/g,''))||0));
         if(qty>0||PRODUCTS.find(p=>p.code===code)){
           parsed[code]=qty;
           if(PRODUCTS.find(p=>p.code===code))matched++;

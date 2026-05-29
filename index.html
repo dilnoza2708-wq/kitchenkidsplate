@@ -270,6 +270,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       <button class="tab" onclick="switchTab('input')" id="tb-input">✏️ Заявки</button>
       <button class="tab" onclick="switchTab('plan')" id="tb-plan">📋 План</button>
       <button class="tab" onclick="switchTab('schedule')" id="tb-schedule">🗓️ По дням</button>
+      <button class="tab" onclick="switchTab('sales')" id="tb-sales" style="color:#a78bfa">🔮 Средние продажи</button>
       <button class="tab" onclick="switchTab('abc')" id="tb-abc">📈 ABC/XYZ</button>
       <button class="tab" onclick="switchTab('history')" id="tb-history">🕒 История</button>
       <button class="tab" onclick="showModal('setupModal')" id="tb-setup" style="margin-left:auto;color:var(--orange)">⚙️ Supabase</button>
@@ -330,6 +331,19 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
         </div>
       </div>
       <div class="parea" id="schedArea"><div class="empty"><div class="ei">🗓️</div><div class="et">Нет расписания</div></div></div>
+    </div>
+
+    <!-- SALES BASE -->
+    <div id="tab-sales" class="tab-content">
+      <div class="toolbar">
+        <span style="font-size:11px;color:#a78bfa">🔮 Средние недельные продажи — основа для прогноза</span>
+        <button class="btn-save" onclick="saveBaseSales()" style="margin-left:auto;border-color:#a78bfa;color:#a78bfa;background:rgba(167,139,250,.07)">💾 Сохранить</button>
+        <button class="btn-out" onclick="clearBaseSales()" style="color:var(--red);border-color:rgba(240,82,82,.3)">🗑 Очистить</button>
+        <button class="btn-out" onclick="showModal('salesModal')">⬆ Загрузить из IIKO</button>
+      </div>
+      <div class="parea" id="salesBaseArea">
+        <!-- rendered by renderBaseSales() -->
+      </div>
     </div>
 
     <!-- ABC/XYZ -->
@@ -396,8 +410,14 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 <!-- MODAL: IIKO -->
 <div id="iikoModal" class="moverlay" style="display:none" onclick="co(event,'iikoModal')">
   <div class="modal" style="width:460px">
-    <h3>⬆ Загрузка остатков из IIKO</h3>
-    <p style="font-size:10px;color:var(--text2);margin-bottom:12px;line-height:1.6">Файл «Расширенная оборотно-сальдовая ведомость» из IIKO.<br>Склад: ГОТОВАЯ ПРОДУКЦИЯ. Используется колонка «Остатки на конец → Кол-во».</p>
+    <h3>⬆ Загрузка из IIKO — остатки и продажи</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:12px;line-height:1.6">
+      Файл <strong>«Расширенная оборотно-сальдовая ведомость»</strong> из IIKO.<br>
+      Автоматически считываются <strong>два показателя</strong> за один раз:<br>
+      &nbsp;📦 <strong>Остатки на конец → Кол-во</strong> — обновляет склад<br>
+      &nbsp;📈 <strong>Расход → Кол-во</strong> — добавляется в историю продаж для прогноза<br>
+      <span style="color:var(--orange)">Загружайте каждую неделю — прогноз будет точнее.</span>
+    </p>
     <div class="dzone" id="dzone" onclick="document.getElementById('iikoFile').click()" ondragover="odv(event)" ondragleave="odl(event)" ondrop="odr(event)">
       <div style="font-size:28px;opacity:.5">📂</div>
       <p>Нажмите или перетащите .xlsx сюда</p>
@@ -405,7 +425,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
     <input type="file" id="iikoFile" accept=".xlsx" style="display:none" onchange="handleIIKO(this.files[0])">
     <div class="ilog" id="ilog" style="display:none"></div>
     <div class="mbrow" style="margin-top:12px">
-      <button class="btn-save" id="applyBtn" onclick="applyImport()" style="display:none;flex:1">✅ Применить</button>
+      <button class="btn-save" id="applyBtn" onclick="applyImport()" style="display:none;flex:1">✅ Применить остатки + добавить продажи в историю</button>
       <button class="btn-out" onclick="closeModal('iikoModal')">Закрыть</button>
     </div>
   </div>
@@ -1170,37 +1190,49 @@ function renderABCLayout(totals,matrix,area,recoHtml){
 //  FORECAST ENGINE
 // ═══════════════════════════════════════════════════════
 
-// Returns forecast qty for a product based on sales history
-// Uses weighted moving average (last 4 weeks, recent weeks weigh more)
+// baseSales: manually entered avg weekly sales per product { code: qty }
+// Loaded from localStorage, editable in UI
+let baseSales = JSON.parse(localStorage.getItem('kp_base_sales') || '{}');
+
+// Returns forecast qty for a product.
+// Priority: salesHistory (uploaded IIKO) → baseSales (manual) → stock turnover proxy
 function getForecast(code) {
-  const hist = getHistory();
-  // Collect weekly totals per product from saved order snapshots (proxy for sales)
-  const weekly = [];
-  // Also use dedicated salesHistory if available
+  // 1. Uploaded IIKO sales history → Weighted Moving Average
   if (salesHistory[code] && salesHistory[code].length > 0) {
-    salesHistory[code].slice(-8).forEach(v => weekly.push(v));
-  } else {
-    // Fall back to order history snapshots
-    [...hist].reverse().forEach(h => {
-      if (!h.ordersSnapshot) return;
-      const snap = h.ordersSnapshot[code] || {};
-      const tot = SOURCES.reduce((s, src) => s + (Number(snap[src.key]) || 0), 0);
-      if (!weekly.includes(tot)) weekly.push(tot); // rough dedup by position
-    });
+    const arr = salesHistory[code].slice(-8);
+    const n = arr.length;
+    let wSum = 0, wTot = 0;
+    arr.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
+    return Math.ceil((wTot > 0 ? wSum / wTot : 0) * 1.1);
   }
-  if (!weekly.length) return 0;
-  // Weighted moving average — most recent week gets highest weight
-  const n = Math.min(weekly.length, 6);
-  const slice = weekly.slice(-n);
-  let weightedSum = 0, weightTotal = 0;
-  slice.forEach((v, i) => {
-    const w = i + 1; // weight = 1..n
-    weightedSum += v * w;
-    weightTotal += w;
+
+  // 2. Manual base sales entered by user
+  if (baseSales[code] && baseSales[code] > 0) {
+    return Math.ceil(baseSales[code] * 1.1);
+  }
+
+  // 3. Order history snapshots (saved weeks)
+  const hist = getHistory();
+  const weeklyFromHist = [];
+  const seenWeeks = new Set();
+  [...hist].reverse().forEach(h => {
+    if (!h.ordersSnapshot || !h.week || seenWeeks.has(h.week)) return;
+    seenWeeks.add(h.week);
+    const snap = h.ordersSnapshot[code] || {};
+    const tot = SOURCES.reduce((s, src) => s + (Number(snap[src.key]) || 0), 0);
+    weeklyFromHist.push(tot);
   });
-  const wma = weightTotal > 0 ? weightedSum / weightTotal : 0;
-  // Add 10% buffer for forecast (less than 20% safety stock because uncertainty is already in WMA)
-  return Math.ceil(wma * 1.1);
+  if (weeklyFromHist.length >= 1) {
+    const n = Math.min(weeklyFromHist.length, 6);
+    const slice = weeklyFromHist.slice(-n);
+    let wSum = 0, wTot = 0;
+    slice.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
+    const avg = wTot > 0 ? wSum / wTot : 0;
+    if (avg > 0) return Math.ceil(avg * 1.1);
+  }
+
+  // 4. No data at all → 0 (user must enter baseSales or upload IIKO)
+  return 0;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1405,47 +1437,80 @@ function odv(e){e.preventDefault();document.getElementById('dzone').classList.ad
 function odl(){document.getElementById('dzone').classList.remove('drag');}
 function odr(e){e.preventDefault();document.getElementById('dzone').classList.remove('drag');handleIIKO(e.dataTransfer.files[0]);}
 
+// ─────────────────────────────────────────────────────
+//  Universal IIKO column finder
+// ─────────────────────────────────────────────────────
+function findIIKOCol(grpRow, hdr, groupName, fallback){
+  let groupStart = -1;
+  for(let c = 0; c < grpRow.length; c++){
+    if(String(grpRow[c]).includes(groupName)){ groupStart = c; break; }
+  }
+  if(groupStart >= 0){
+    for(let c = groupStart; c < Math.min(hdr.length, groupStart + 8); c++){
+      if(String(hdr[c]).trim() === 'Кол-во') return c;
+    }
+  }
+  return fallback;
+}
+
 function handleIIKO(file){
   if(!file||!file.name.endsWith('.xlsx')){ilog('❌ Нужен .xlsx файл','e');return;}
   const logEl=document.getElementById('ilog'); logEl.style.display='block'; logEl.innerHTML='';
   ilog(`📂 Читаю: ${file.name}`,'ok');
   const reader=new FileReader();
-  reader.onload=e=>{
+  reader.onload=ev=>{
     try{
-      const wb=XLSX.read(e.target.result,{type:'array'});
+      const wb=XLSX.read(ev.target.result,{type:'array'});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
       ilog(`📋 Строк: ${rows.length}`,'ok');
+
+      // Find header row (row with "Код" in col 0)
       let headerRow=-1;
       for(let i=0;i<Math.min(rows.length,15);i++){
         if(String(rows[i][0]).trim()==='Код'){headerRow=i;break;}
       }
-      if(headerRow===-1){ilog('❌ Не найдена строка заголовков','e');return;}
-      // Find "Остатки на конец" qty column
-      let qtyCol=28; // default from known IIKO structure
-      const hdr=rows[headerRow];
-      const grpRow=rows[headerRow-1]||[];
-      let endStart=-1;
-      for(let c=0;c<grpRow.length;c++){if(String(grpRow[c]).includes('Остатки на конец'))endStart=c;}
-      if(endStart>=0){
-        for(let c=endStart;c<Math.min(hdr.length,endStart+5);c++){
-          if(String(hdr[c]).trim()==='Кол-во'){qtyCol=c;break;}
-        }
-      }
-      ilog(`✓ Колонка остатков: ${qtyCol+1}`,'ok');
-      const parsed={};let matched=0;
+      if(headerRow===-1){ilog('❌ Не найдена строка заголовков (ожидается "Код" в колонке A)','e');return;}
+
+      const hdr = rows[headerRow];
+      const grpRow = rows[headerRow-1] || [];
+
+      // Find "Остатки на конец → Кол-во"
+      const stockCol = findIIKOCol(grpRow, hdr, 'Остатки на конец', 28);
+      ilog(`✓ Колонка остатков (Остатки на конец → Кол-во): ${stockCol+1}`,'ok');
+
+      // Find "Расход → Кол-во" — actual sales/consumption
+      const salesCol = findIIKOCol(grpRow, hdr, 'Расход', 6);
+      ilog(`✓ Колонка расхода (Расход → Кол-во): ${salesCol+1}`,'ok');
+
+      const parsedStock={}, parsedSales={};
+      let matchedStock=0, matchedSales=0;
+
       for(let i=headerRow+1;i<rows.length;i++){
         const row=rows[i];
         const code=String(row[0]).trim();
         if(!code||code==='Код')continue;
-        parsed[code]=Math.max(0,Math.round(parseFloat(String(row[qtyCol]).replace(',','.'))||0));
-        if(PRODUCTS.find(p=>p.code===code))matched++;
+
+        const stockQty = Math.max(0, Math.round(parseFloat(String(row[stockCol]).replace(',','.'))||0));
+        const salesQty = Math.max(0, Math.round(parseFloat(String(row[salesCol]).replace(',','.'))||0));
+
+        parsedStock[code] = stockQty;
+        parsedSales[code] = salesQty;
+
+        if(PRODUCTS.find(p=>p.code===code)){ matchedStock++; if(salesQty>0) matchedSales++; }
       }
-      ilog(`✅ Позиций: ${Object.keys(parsed).length}, совпало: ${matched}`,'ok');
-      PRODUCTS.filter(p=>parsed[p.code]!==undefined).slice(0,5).forEach(p=>ilog(`  • ${p.name.substring(0,35)}: ${parsed[p.code]}`,'ok'));
-      pendingImport={data:parsed,file:file.name,ts:ts()};
+
+      ilog(`✅ Остатки: ${matchedStock} совпало с базой продуктов`,'ok');
+      ilog(`✅ Расход (продажи): ${matchedSales} позиций с ненулевым расходом`,'ok');
+
+      // Preview
+      ilog('── Примеры (остаток / расход):','ok');
+      PRODUCTS.filter(p=>parsedStock[p.code]!==undefined||parsedSales[p.code]>0).slice(0,6)
+        .forEach(p=>ilog(`  • ${p.name.substring(0,32)}: остаток=${parsedStock[p.code]||0}, расход=${parsedSales[p.code]||0}`,'ok'));
+
+      pendingImport={stock:parsedStock, sales:parsedSales, file:file.name, ts:ts()};
       document.getElementById('applyBtn').style.display='flex';
-    }catch(err){ilog('❌ '+err.message,'e');}
+    }catch(err){ilog('❌ '+err.message,'e'); console.error(err);}
   };
   reader.readAsArrayBuffer(file);
 }
@@ -1458,20 +1523,42 @@ function ilog(msg,type){
 
 async function applyImport(){
   if(!pendingImport)return;
-  stock={...pendingImport.data};
-  stockDate=pendingImport.ts;
-  localStorage.setItem('kp_stock',JSON.stringify(stock));
-  localStorage.setItem('kp_stock_date',stockDate);
-  // Push to Supabase
+
+  // 1. Update stock
+  stock = {...pendingImport.stock};
+  stockDate = pendingImport.ts;
+  localStorage.setItem('kp_stock', JSON.stringify(stock));
+  localStorage.setItem('kp_stock_date', stockDate);
+
+  // 2. Append sales (расход) to salesHistory
+  const salesData = pendingImport.sales;
+  let salesAdded = 0;
+  PRODUCTS.forEach(p => {
+    if(!salesHistory[p.code]) salesHistory[p.code] = [];
+    const qty = salesData[p.code] || 0;
+    salesHistory[p.code].push(qty);
+    if(salesHistory[p.code].length > 12) salesHistory[p.code].shift(); // keep 12 weeks
+    if(qty > 0) salesAdded++;
+  });
+  localStorage.setItem('kp_sales_hist', JSON.stringify(salesHistory));
+  updateSalesHistCount();
+
+  // 3. Push stock to Supabase
   if(sb){
-    const rows=Object.entries(stock).map(([code,qty])=>({product_code:code,qty,updated_by:currentUser,updated_at:new Date().toISOString()}));
-    try{await sb.from('kp_stock').upsert(rows,{onConflict:'product_code'});}catch(e){}
+    const rows = Object.entries(stock).map(([code,qty])=>({product_code:code,qty,updated_by:currentUser,updated_at:new Date().toISOString()}));
+    try{ await sb.from('kp_stock').upsert(rows,{onConflict:'product_code'}); }catch(e){}
   }
+
   renderStock();
-  if(currentUser)renderInputTable();
-  saveHistEntry({ts:ts(),user:currentUser||'Система',week:currentWeek,changes:[`Остатки обновлены из: ${pendingImport.file}`]});
+  if(currentUser){ renderInputTable(); renderBaseSales(); }
+  renderDash();
+
+  saveHistEntry({ts:ts(), user:currentUser||'Система', week:currentWeek,
+    changes:[`Остатки и расход обновлены из: ${pendingImport.file} (${salesAdded} позиций с расходом)`]});
+
   closeModal('iikoModal');
-  toast('Остатки обновлены из IIKO');
+  toast(`✅ Остатки обновлены. Расход за период добавлен в историю продаж (${salesAdded} поз.)`);
+  pendingImport = null;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1899,9 +1986,89 @@ function clearSalesHist(){
 function updateSalesHistCount(){
   const el=document.getElementById('salesHistCount');
   if(!el)return;
-  // Count how many weeks are in the longest series
   const maxLen=Math.max(0,...Object.values(salesHistory).map(a=>a.length));
   el.textContent=maxLen;
+}
+
+// ═══════════════════════════════════════════════════════
+//  BASE SALES — manual avg weekly sales
+// ═══════════════════════════════════════════════════════
+function renderBaseSales(){
+  const area=document.getElementById('salesBaseArea');
+  if(!area)return;
+  const groups=[...new Set(PRODUCTS.map(p=>p.group))];
+  const hasSalesHist=Object.values(salesHistory).some(a=>a.length>0);
+  let banner=hasSalesHist
+    ? `<div style="background:rgba(45,217,143,.08);border:1px solid rgba(45,217,143,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--green)">
+        ✅ История продаж из IIKO загружена — прогноз строится автоматически. Поля ниже используются как резервный вариант.
+       </div>`
+    : `<div style="background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#a78bfa">
+        💡 <strong>Введите средние продажи за неделю</strong> — они станут основой прогноза до загрузки истории из IIKO.<br>
+        <span style="color:var(--text3);font-size:10px">Приоритет: 1) История IIKO → 2) Введённые средние → 3) История сохранённых заявок</span>
+       </div>`;
+  let h=banner+`<table class="ptable"><thead><tr>
+    <th style="min-width:210px">Продукт</th>
+    <th class="c">Категория</th>
+    <th class="c" style="color:#a78bfa">Ср. продажи/нед ✎</th>
+    <th class="c">Прогноз (+10%)</th>
+    <th class="c">Склад</th>
+    <th class="c">К пр-ву</th>
+    <th class="c" style="font-size:9px;color:var(--text3)">Источник</th>
+  </tr></thead><tbody>`;
+  for(const g of groups){
+    h+=`<tr class="crow"><td colspan="7">${g}</td></tr>`;
+    for(const p of PRODUCTS.filter(x=>x.group===g)){
+      const base=baseSales[p.code]||'';
+      const fc=getForecast(p.code);
+      const st=stock[p.code]??0;
+      const need=Math.max(0,Math.ceil(fc*1.2)-st);
+      const src=salesHistory[p.code]?.length>0?'📊 IIKO':baseSales[p.code]>0?'✏️ Вручную':'—';
+      const c=CC[p.cat]||'#8a93b0';
+      h+=`<tr>
+        <td><div class="pn">${p.name}</div></td>
+        <td style="text-align:center"><span class="mpill" style="background:${c}22;color:${c}">${p.cat}</span></td>
+        <td style="text-align:center">
+          <input class="qinp" type="number" min="0" placeholder="0"
+            value="${base}" style="border-color:rgba(167,139,250,.5)"
+            onchange="updateBaseSale('${p.code}',this.value)">
+        </td>
+        <td style="text-align:center"><span class="bdg" style="background:rgba(167,139,250,.1);color:#a78bfa" id="bfc-${p.code}">${fc||'—'}</span></td>
+        <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${st<15?'var(--red)':'var(--text2)'}">${st}</td>
+        <td style="text-align:center"><span class="bdg ${need>0?'b-gr':'b-dm'}" id="bnd-${p.code}">${need>0?need:'—'}</span></td>
+        <td style="text-align:center;font-size:10px;color:var(--text3)" id="bsrc-${p.code}">${src}</td>
+      </tr>`;
+    }
+  }
+  h+='</tbody></table>';
+  area.innerHTML=h;
+}
+
+function updateBaseSale(code,val){
+  baseSales[code]=Number(val)||0;
+  const fc=getForecast(code);
+  const st=stock[code]??0;
+  const need=Math.max(0,Math.ceil(fc*1.2)-st);
+  const fe=document.getElementById(`bfc-${code}`);
+  const ne=document.getElementById(`bnd-${code}`);
+  const se=document.getElementById(`bsrc-${code}`);
+  if(fe)fe.textContent=fc||'—';
+  if(ne){ne.textContent=need>0?need:'—';ne.className=`bdg ${need>0?'b-gr':'b-dm'}`;}
+  if(se)se.textContent=Number(val)>0?'✏️ Вручную':'—';
+}
+
+function saveBaseSales(){
+  localStorage.setItem('kp_base_sales',JSON.stringify(baseSales));
+  toast('Средние продажи сохранены ✅');
+  if(currentUser)renderInputTable();
+  renderDash();
+}
+
+function clearBaseSales(){
+  if(!confirm('Очистить все введённые средние продажи?'))return;
+  baseSales={};
+  localStorage.removeItem('kp_base_sales');
+  renderBaseSales();
+  toast('Очищено','warn');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1915,6 +2082,7 @@ function switchTab(t){
   if(t==='history')renderHistory();
   if(t==='dash')renderDash();
   if(t==='abc')runABCXYZ();
+  if(t==='sales')renderBaseSales();
 }
 function showModal(id){
   document.getElementById(id).style.display='flex';

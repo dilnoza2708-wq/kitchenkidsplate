@@ -252,7 +252,9 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       <div class="online-list" id="onlineList"><div style="font-size:10px;color:var(--text3)">нет данных</div></div>
     </div>
     <div class="sb-sec">
-      <div class="sb-lbl">📅 Дни производства</div>
+      <div class="sb-lbl">📅 Дни производства
+        <button onclick="showModal('meatModal')" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text3);font-size:9px;padding:2px 6px;cursor:pointer;font-family:Manrope,sans-serif" title="Настроить какое сырьё в какой день">⚙️ Изменить</button>
+      </div>
       <div class="days-grid" id="daysGrid"></div>
     </div>
     <div class="sb-sec" style="flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0">
@@ -350,6 +352,24 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
         <select id="histFilter" class="wsel mla" onchange="renderHistory()"><option value="">Все недели</option></select>
       </div>
       <div class="parea" id="histArea"><div class="empty"><div class="ei">🕒</div><div class="et">Нет записей</div></div></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- MODAL: Meat Schedule Editor -->
+<div id="meatModal" class="moverlay" style="display:none" onclick="co(event,'meatModal')">
+  <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
+    <h3>🥩 Расписание сырья по дням</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+      Назначьте какие категории сырья производятся в каждый день.<br>
+      Одна категория может быть в нескольких днях (например Курица и в ПН и в ВТ).
+    </p>
+    <div id="meatSchedGrid" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div class="mbrow" style="margin-top:16px">
+      <button class="btn-prim" onclick="saveMeatSched()" style="flex:1"><span class="btxt">💾 Сохранить расписание</span></button>
+      <button class="btn-out" onclick="resetMeatSched()">↩ Сбросить</button>
+      <button class="btn-out" onclick="closeModal('meatModal')">Закрыть</button>
     </div>
   </div>
 </div>
@@ -565,11 +585,83 @@ const DAYS = [
   {key:'sat',name:'СБ',full:'Суббота',meat:'Любые',color:'#8a93b0'},
 ];
 
-const CAT_DAY = {
-  'Индейка':['mon'],'Курица':['mon'],'Лосось':['tue'],
-  'Кролик':['wed'],'Телятина':['wed'],'Овощи':['thu'],
-  'Творог':['fri','sat'],
+// CAT_DAY is now computed dynamically from meatSchedule (user-editable)
+// Default schedule — overridden by localStorage 'kp_meat_schedule'
+const DEFAULT_MEAT_SCHEDULE = {
+  mon: ['Индейка','Курица'],
+  tue: ['Лосось'],
+  wed: ['Кролик','Телятина'],
+  thu: ['Овощи'],
+  fri: [],
+  sat: [],
 };
+
+// Returns current CAT_DAY mapping derived from meatSchedule
+function getCatDay() {
+  const map = {};
+  const sched = getMeatSchedule();
+  Object.entries(sched).forEach(([day, cats]) => {
+    cats.forEach(cat => {
+      if(!map[cat]) map[cat] = [];
+      if(!map[cat].includes(day)) map[cat].push(day);
+    });
+  });
+  return map;
+}
+
+function getMeatSchedule() {
+  const saved = localStorage.getItem('kp_meat_schedule');
+  return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_MEAT_SCHEDULE));
+}
+
+function saveMeatSchedule(sched) {
+  localStorage.setItem('kp_meat_schedule', JSON.stringify(sched));
+}
+
+// ── ABC-based safety stock multipliers ──
+// A = high volume → bigger buffer (1.5 = 50%)
+// B = medium      → normal buffer (1.3 = 30%)
+// C = low volume  → small buffer  (1.2 = 20%)
+const ABC_SAFETY = { A: 1.5, B: 1.3, C: 1.2 };
+
+// In-memory ABC cache rebuilt from history each session
+let abcCache = {};
+
+function buildABCCache() {
+  const hist = getHistory();
+  const totals = {};
+  hist.forEach(h => {
+    if(!h.ordersSnapshot) return;
+    allProducts().forEach(p => {
+      const snap = h.ordersSnapshot[p.code] || {};
+      const tot = SOURCES.reduce((s, src) => s + (Number(snap[src.key]) || 0), 0);
+      totals[p.code] = (totals[p.code] || 0) + tot;
+    });
+  });
+  // Also include salesHistory
+  Object.entries(salesHistory).forEach(([code, arr]) => {
+    const sum = arr.reduce((s, v) => s + Math.abs(v), 0);
+    totals[code] = (totals[code] || 0) + sum;
+  });
+
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const grand = sorted.reduce((s, [, v]) => s + v, 0) || 1;
+  let cum = 0;
+  abcCache = {};
+  sorted.forEach(([code, vol]) => {
+    cum += vol;
+    const pct = cum / grand * 100;
+    abcCache[code] = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+  });
+}
+
+function getABCClass(code) {
+  return abcCache[code] || 'B'; // default B if no history
+}
+
+function getSafetyMultiplier(code) {
+  return ABC_SAFETY[getABCClass(code)] || 1.2;
+}
 
 const CC = {
   'Индейка':'#f7a94f','Курица':'#ffd166','Лосось':'#f4857a',
@@ -790,6 +882,7 @@ function renderOnline(){
 function init(){
   // Always reload persisted data fresh on start
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
+  buildABCCache();
   document.getElementById('weekSel').value=currentWeek;
   loadOrdersLocal();
   renderDays();
@@ -838,11 +931,15 @@ function onWeekChange(){
 //  DAYS
 // ═══════════════════════════════════════════════════════
 function renderDays(){
-  document.getElementById('daysGrid').innerHTML=DAYS.map(d=>`
-    <div class="dchip ${activeDays[d.key]?'on':''}" onclick="toggleDay('${d.key}')">
+  const sched = getMeatSchedule();
+  document.getElementById('daysGrid').innerHTML=DAYS.map(d=>{
+    const cats = sched[d.key]||[];
+    const label = cats.length ? cats.join(', ') : 'Любые';
+    return `<div class="dchip ${activeDays[d.key]?'on':''}" onclick="toggleDay('${d.key}')" title="${label}">
       <span class="dchip-n">${d.name}</span>
-      <div class="dchip-m" style="color:${d.color}">${d.meat.split(',')[0]}</div>
-    </div>`).join('');
+      <div class="dchip-m" style="color:${d.color};font-size:8px">${cats.length?cats.slice(0,2).join(', '):'—'}</div>
+    </div>`;
+  }).join('');
 }
 function toggleDay(k){
   activeDays[k]=!activeDays[k];
@@ -1010,7 +1107,7 @@ function renderDash(){
       <div class="kpi-sub">порций / единиц</div></div>
     <div class="kpi"><div class="kpi-label">К производству</div>
       <div class="kpi-val ${totalProd>0?'kpi-good':'kpi-warn'}">${totalProd||0}</div>
-      <div class="kpi-sub">с учётом склада (×1.2)</div></div>
+      <div class="kpi-sub">A=+50% B=+30% C=+20% запас</div></div>
     <div class="kpi"><div class="kpi-label">Нет на складе</div>
       <div class="kpi-val ${zeroStock?'kpi-bad':'kpi-good'}">${zeroStock}</div>
       <div class="kpi-sub">позиций (срочно!)</div></div>
@@ -1310,8 +1407,10 @@ function calcNeeds() {
     // Extra order = how much the actual order exceeds the forecast (special demand)
     const extraOrder = (orderTotal > forecast && forecast > 0) ? (orderTotal - forecast) : 0;
 
-    const needed = Math.max(0, Math.ceil(effectiveDemand * 1.2) - st);
-    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, o };
+    const safetyMult = getSafetyMultiplier(p.code);
+    const abcClass = getABCClass(p.code);
+    const needed = Math.max(0, Math.ceil(effectiveDemand * safetyMult) - st);
+    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, o };
   }).filter(p => p.effectiveDemand > 0 || p.orderTotal > 0);
 }
 
@@ -1319,6 +1418,7 @@ async function genPlan(){
   // Always reload fresh from storage before calculating
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
   extraProducts = JSON.parse(localStorage.getItem('kp_extra_products') || '[]');
+  buildABCCache(); // refresh ABC classes from history
   const btn=document.getElementById('genBtn');
   btn.classList.add('ld'); btn.disabled=true;
   const panel=document.getElementById('aiPanel');
@@ -1361,7 +1461,7 @@ function buildPlan(needs,activeDaysList){
   const plan={}; activeDaysList.forEach(d=>plan[d.key]=[]);
   for(const p of needs){
     if(p.needed<=0)continue;
-    const pref=CAT_DAY[p.cat]||[];
+    const pref=getCatDay()[p.cat]||[];
     let placed=false;
     for(const dk of pref){if(plan[dk]!==undefined){plan[dk].push(p);placed=true;break;}}
     if(!placed&&activeDaysList[0])plan[activeDaysList[0].key].push(p);
@@ -1405,6 +1505,8 @@ function renderPlan(needs,activeDaysList){
     <th class="c" style="color:#4f8ef7">Заявки</th>
     <th class="c" style="color:#a78bfa">Прогноз</th>
     <th class="c" style="color:var(--orange)">Эфф.спрос</th>
+    <th class="c">ABC</th>
+    <th class="c" title="Страховой запас: A=50%, B=30%, C=20%">Запас%</th>
     <th class="c">Склад</th><th class="c">К пр-ву</th>
     ${activeDaysList.map(d=>`<th class="c" style="color:${d.color}">${d.name}<br><span style="font-size:8px;color:var(--text3)">${d.meat.split(',')[0]}</span></th>`).join('')}
   </tr></thead><tbody>`;
@@ -1425,6 +1527,8 @@ function renderPlan(needs,activeDaysList){
         <td style="text-align:center"><span class="bdg b-bl">${p.orderTotal||'—'}</span></td>
         <td style="text-align:center"><span class="bdg" style="background:rgba(167,139,250,.1);color:#a78bfa">${p.forecast||'—'}</span></td>
         <td style="text-align:center"><span class="bdg b-or">${p.effectiveDemand}</span>${extraTag}</td>
+        <td style="text-align:center"><span class="bdg" style="background:${p.abcClass==='A'?'rgba(45,217,143,.12)':p.abcClass==='B'?'rgba(79,142,247,.1)':'rgba(240,82,82,.1)'};color:${p.abcClass==='A'?'var(--green)':p.abcClass==='B'?'var(--accent)':'var(--red)'}">${p.abcClass||'B'}</span></td>
+        <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.abcClass==='A'?'var(--orange)':p.abcClass==='B'?'var(--text2)':'var(--text3)'}">${p.safetyMult?Math.round((p.safetyMult-1)*100)+'%':'20%'}</td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.st<15?'var(--red)':'var(--text2)'}">${p.st}</td>
         <td style="text-align:center"><span class="bdg ${p.needed>0?'b-gr':'b-dm'}">${p.needed>0?p.needed:'—'}</span></td>
         ${activeDaysList.map(d=>{
@@ -1445,7 +1549,7 @@ function renderSched(plan,activeDaysList){
     const items=(plan[d.key]||[]).filter(p=>p.needed>0);
     h+=`<div class="dcard" style="border-top-color:${d.color}">
       <div class="dcard-head"><span class="dcard-title">${d.full}</span>
-        <span class="mpill" style="background:${d.color}22;color:${d.color};font-size:9px">${d.meat}</span></div>
+        <span class="mpill" style="background:${d.color}22;color:${d.color};font-size:9px">${(getMeatSchedule()[d.key]||[]).join(', ')||d.meat}</span></div>
       ${!items.length?'<div style="font-size:10px;color:var(--text3);font-style:italic">Нет позиций</div>':
         items.map(p=>`<div class="dcrow"><div class="dcn" title="${p.name}">${p.name}</div><div class="dcq">${p.needed}</div></div>`).join('')}
       ${items.length?`<div class="dcard-foot"><span>${items.length} поз.</span><span>${items.reduce((s,p)=>s+p.needed,0)} ед.</span></div>`:''}
@@ -1794,20 +1898,70 @@ function exportPlanXLSX(){
 }
 
 function buildSchedSheet(activeDaysList){
-  const aoa = [['ПРОИЗВОДСТВЕННОЕ РАСПИСАНИЕ'], ['']];
-  for(const d of activeDaysList){
-    const items = (planResult[d.key]||[]).filter(p=>p.needed>0);
-    aoa.push([`${d.full.toUpperCase()} — ${d.meat}`, 'К производству']);
-    if(!items.length){
-      aoa.push(['(нет позиций)', '']);
-    } else {
-      items.forEach(p => aoa.push([p.name, p.needed]));
-      aoa.push(['Итого:', items.reduce((s,p)=>s+p.needed,0)]);
+  const week = getWeekLabel();
+  const sched = getMeatSchedule();
+
+  // Title rows
+  const aoa = [
+    ['ПРОИЗВОДСТВЕННОЕ РАСПИСАНИЕ — ' + week],
+    ['Сформирован: ' + ts() + '   Пользователь: ' + (currentUser||'—')],
+    [],
+  ];
+
+  // Header row: Продукт | Категория | К пр-ву | ПН | ВТ | СР | ...
+  const hdr = ['Продукт','Категория','Группа','Заявки','Прогноз','К пр-ву'];
+  activeDaysList.forEach(d => {
+    const cats = (sched[d.key]||[]);
+    hdr.push(d.full + (cats.length ? ' ('+cats.join('+')+')' : ''));
+  });
+  hdr.push('Итого дней');
+  aoa.push(hdr);
+
+  // Collect ALL products that appear in ANY active day
+  const allNeeded = calcNeeds().filter(p => p.needed > 0);
+  const groups = [...new Set(allNeeded.map(p=>p.group))];
+
+  for(const g of groups){
+    aoa.push([g]); // group header row
+    for(const p of allNeeded.filter(x=>x.group===g)){
+      const dayQtys = activeDaysList.map(d =>
+        (planResult[d.key]||[]).some(x=>x.code===p.code) ? p.needed : ''
+      );
+      const daysCount = dayQtys.filter(v=>v!=='').length;
+      aoa.push([
+        p.name, p.cat, p.group,
+        p.orderTotal||'', p.forecast||'', p.needed,
+        ...dayQtys,
+        daysCount
+      ]);
     }
-    aoa.push(['']);
   }
+
+  // Totals row
+  aoa.push([]);
+  const totRow = ['ИТОГО', '', '', '', '',
+    allNeeded.reduce((s,p)=>s+p.needed,0),
+    ...activeDaysList.map(d=>(planResult[d.key]||[]).reduce((s,p)=>s+p.needed,0)),
+    ''
+  ];
+  aoa.push(totRow);
+
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{wch:42},{wch:14}];
+
+  // Column widths
+  ws['!cols'] = [
+    {wch:38},{wch:12},{wch:20},{wch:9},{wch:9},{wch:10},
+    ...activeDaysList.map(()=>({wch:14})),
+    {wch:10}
+  ];
+
+  // Merge title across all columns
+  const totalCols = hdr.length;
+  ws['!merges'] = [
+    {s:{r:0,c:0},e:{r:0,c:totalCols-1}},
+    {s:{r:1,c:0},e:{r:1,c:totalCols-1}},
+  ];
+
   return ws;
 }
 
@@ -1815,11 +1969,40 @@ function exportSchedXLSX(){
   if(!planResult){ toast('Сначала сгенерируйте план','warn'); return; }
   const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
   const week = getWeekLabel();
-  const ws = buildSchedSheet(activeDaysList);
+  const sched = getMeatSchedule();
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'По дням');
-  XLSX.writeFile(wb, `расписание_${week}.xlsx`);
-  toast('Excel скачан ✅');
+
+  // Sheet 1: Full combined table
+  const wsAll = buildSchedSheet(activeDaysList);
+  XLSX.utils.book_append_sheet(wb, wsAll, 'Сводный план');
+
+  // Sheet 2+: One sheet per active day
+  for(const d of activeDaysList){
+    const items = (planResult[d.key]||[]).filter(p=>p.needed>0);
+    const cats = (sched[d.key]||[]);
+    const dayAoa = [
+      [d.full.toUpperCase() + (cats.length ? ' — ' + cats.join(', ') : '')],
+      ['Неделя: ' + week + '   Сформирован: ' + ts()],
+      [],
+      ['Продукт','Категория','Заявки','Прогноз','К производству'],
+    ];
+    if(!items.length){
+      dayAoa.push(['(нет позиций для производства)','','','','']);
+    } else {
+      items.forEach(p => dayAoa.push([p.name, p.cat, p.orderTotal||'', p.forecast||'', p.needed]));
+      dayAoa.push([]);
+      dayAoa.push(['ИТОГО','','','', items.reduce((s,p)=>s+p.needed,0)]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(dayAoa);
+    ws['!cols'] = [{wch:38},{wch:12},{wch:9},{wch:9},{wch:14}];
+    ws['!merges'] = [{s:{r:0,c:0},e:{r:0,c:4}},{s:{r:1,c:0},e:{r:1,c:4}}];
+    // Sheet name max 31 chars
+    const sheetName = (d.name + ' ' + (cats.length ? cats.slice(0,2).join('+') : d.full)).substring(0,31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  }
+
+  XLSX.writeFile(wb, 'план_' + week + '.xlsx');
+  toast('Excel скачан ✅ (' + (activeDaysList.length+1) + ' листов)');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1911,7 +2094,7 @@ function buildPlanPrintHTML(){
     <span>📋 Заявка — прямой заказ от сотрудника</span>
     <span>🔮 Прогноз — WMA по истории продаж</span>
     <span>⚖️ Эфф.спрос — основа для расчёта производства</span>
-    <span>К пр-ву = эфф.спрос × 1.2 − остаток</span>
+    <span>К пр-ву = эфф.спрос × запас(A=1.5/B=1.3/C=1.2) − остаток</span>
   </div>
   </body></html>`;
 }
@@ -1919,38 +2102,96 @@ function buildPlanPrintHTML(){
 function buildSchedPrintHTML(){
   const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
   const week = getWeekLabel();
-  const dayColors = {mon:'#e67e22',tue:'#e74c3c',wed:'#27ae60',thu:'#16a085',fri:'#555',sat:'#555'};
+  const sched = getMeatSchedule();
+  const allNeeded = calcNeeds().filter(p=>p.needed>0);
+  const groups = [...new Set(allNeeded.map(p=>p.group))];
+  const dayColors = {mon:'#e67e22',tue:'#e74c3c',wed:'#27ae60',thu:'#16a085',fri:'#777',sat:'#777'};
 
-  const cards = activeDaysList.map(d => {
-    const items = (planResult[d.key]||[]).filter(p=>p.needed>0);
-    const rows = items.length
-      ? items.map(p=>`<tr><td>${p.name}</td><td style="text-align:right;font-weight:700;color:#27ae60;white-space:nowrap">${p.needed} шт</td></tr>`).join('')
-      : '<tr><td colspan="2" style="color:#aaa;font-style:italic">Нет позиций</td></tr>';
-    const total = items.reduce((s,p)=>s+p.needed,0);
-    return `<div style="break-inside:avoid;border:1px solid #ddd;border-top:3px solid ${dayColors[d.key]||'#333'};border-radius:6px;padding:10px;margin-bottom:10px">
-      <div style="font-weight:800;font-size:11pt;margin-bottom:4px">${d.full}</div>
-      <div style="font-size:8pt;color:#888;margin-bottom:8px;background:#f5f5f5;padding:3px 7px;border-radius:3px;display:inline-block">${d.meat}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:9pt">
-        <thead><tr style="border-bottom:1px solid #eee"><th style="text-align:left;font-weight:600;color:#555;padding:3px 0">Продукт</th><th style="text-align:right;font-weight:600;color:#555">К пр-ву</th></tr></thead>
-        <tbody>${rows}</tbody>
-        ${items.length?`<tfoot><tr style="border-top:1px solid #ddd"><td style="font-weight:700;padding-top:5px">Итого позиций: ${items.length}</td><td style="text-align:right;font-weight:800;color:#27ae60;padding-top:5px">${total} шт</td></tr></tfoot>`:''}
-      </table>
-    </div>`;
+  // ── Part 1: Full summary table ──
+  const dayHeaders = activeDaysList.map(d=>{
+    const cats = (sched[d.key]||[]);
+    return '<th style="text-align:center;min-width:48px;background:#1a2035;color:#fff">'+d.name+'<br><span style="font-size:7pt;color:#aaa">'+(cats.length?cats.slice(0,2).join('+'):'')+'</span></th>';
   }).join('');
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Расписание ${week}</title>
-  <style>
-    body{font-family:Arial,sans-serif;font-size:10pt;color:#222;margin:20px}
-    h1{font-size:14pt;margin:0 0 4px}
-    .sub{font-size:9pt;color:#666;margin-bottom:14px}
-    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-    @page{margin:15mm;size:A4 portrait}
-  </style></head><body>
-  <h1>🗓️ Производственное расписание — ${week}</h1>
-  <div class="sub">Сформирован: ${ts()} &nbsp;·&nbsp; ${currentUser||'—'}</div>
-  <div class="grid">${cards}</div>
-  </body></html>`;
+  let tableRows = '';
+  for(const g of groups){
+    tableRows += '<tr><td colspan="'+(4+activeDaysList.length)+'" style="background:#f0f0f0;font-weight:700;font-size:8pt;text-transform:uppercase;color:#555;padding:4px 8px">'+g+'</td></tr>';
+    for(const p of allNeeded.filter(x=>x.group===g)){
+      const catColor={Индейка:'#e67e22',Курица:'#f39c12',Лосось:'#e74c3c',Кролик:'#27ae60',Телятина:'#8e44ad',Овощи:'#16a085',Творог:'#2980b9'}[p.cat]||'#555';
+      const dayCells = activeDaysList.map(d=>{
+        const inDay = (planResult[d.key]||[]).some(x=>x.code===p.code);
+        return '<td style="text-align:center">'+(inDay?'<strong style="color:#27ae60">'+p.needed+'</strong>':'<span style="color:#ccc">—</span>')+'</td>';
+      }).join('');
+      tableRows += '<tr>'
+        +'<td><span style="font-size:9pt">'+p.name+'</span><br><span style="font-size:7pt;color:'+catColor+'">'+p.cat+'</span></td>'
+        +'<td style="text-align:center;font-size:9pt">'+( p.orderTotal||'—')+'</td>'
+        +'<td style="text-align:center;font-weight:700;color:'+(p.needed>0?'#27ae60':'#ccc')+'">'+( p.needed||'—')+'</td>'
+        +dayCells
+        +'</tr>';
+    }
+  }
+
+  const totalRow = '<tr style="font-weight:700;background:#f9f9f9">'
+    +'<td>ИТОГО</td><td></td>'
+    +'<td style="text-align:center;color:#27ae60">'+allNeeded.reduce((s,p)=>s+p.needed,0)+'</td>'
+    +activeDaysList.map(d=>'<td style="text-align:center;color:#27ae60">'+(planResult[d.key]||[]).reduce((s,p)=>s+p.needed,0)+'</td>').join('')
+    +'</tr>';
+
+  // ── Part 2: Per-day cards (page 2) ──
+  const dayCards = activeDaysList.map(d=>{
+    const items = (planResult[d.key]||[]).filter(p=>p.needed>0);
+    const cats = (sched[d.key]||[]);
+    const color = dayColors[d.key]||'#333';
+    const rows2 = items.length
+      ? items.map((p,i)=>'<tr style="background:'+(i%2?'#fafafa':'#fff')+'">'
+          +'<td style="padding:5px 8px">'+p.name+'</td>'
+          +'<td style="text-align:center;padding:5px 8px;color:#888">'+p.cat+'</td>'
+          +'<td style="text-align:center;padding:5px 8px">'+( p.orderTotal||'—')+'</td>'
+          +'<td style="text-align:right;padding:5px 8px;font-weight:700;color:#27ae60">'+p.needed+'</td>'
+          +'</tr>').join('')
+      : '<tr><td colspan="4" style="color:#aaa;font-style:italic;padding:8px">Нет позиций</td></tr>';
+    const total = items.reduce((s,p)=>s+p.needed,0);
+    return '<div style="break-inside:avoid;margin-bottom:20px;border:1px solid #ddd;border-radius:6px;overflow:hidden">'
+      +'<div style="background:'+color+';color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">'
+      +'<strong style="font-size:11pt">'+d.full+'</strong>'
+      +'<span style="font-size:9pt;opacity:.85">'+(cats.length?cats.join(', '):'')+'</span>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:9pt">'
+      +'<thead><tr style="background:#f5f5f5"><th style="text-align:left;padding:5px 8px">Продукт</th>'
+      +'<th style="text-align:center;padding:5px 8px">Кат.</th>'
+      +'<th style="text-align:center;padding:5px 8px">Заявки</th>'
+      +'<th style="text-align:right;padding:5px 8px">К пр-ву</th></tr></thead>'
+      +'<tbody>'+rows2+'</tbody>'
+      +(items.length?'<tfoot><tr style="border-top:2px solid #ddd;background:#f9f9f9"><td colspan="3" style="padding:5px 8px;font-weight:700">Итого: '+items.length+' позиций</td><td style="text-align:right;padding:5px 8px;font-weight:800;color:#27ae60">'+total+' шт</td></tr></tfoot>':'')
+      +'</table></div>';
+  }).join('');
+
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>План '+week+'</title>'
+    +'<style>'
+    +'body{font-family:Arial,sans-serif;font-size:10pt;color:#222;margin:15px}'
+    +'h1{font-size:13pt;margin:0 0 3px}'
+    +'.sub{font-size:8pt;color:#666;margin-bottom:12px}'
+    +'table{width:100%;border-collapse:collapse}'
+    +'th{background:#1a2035;color:#fff;padding:6px 7px;text-align:left;font-size:8pt}'
+    +'td{padding:5px 7px;border-bottom:1px solid #eee;vertical-align:middle}'
+    +'.page-break{page-break-before:always;margin-top:20px}'
+    +'@page{margin:12mm;size:A4 landscape}'
+    +'@media print{.page-break{page-break-before:always}}'
+    +'</style></head><body>'
+    +'<h1>📋 Производственный план — '+week+'</h1>'
+    +'<div class="sub">Сформирован: '+ts()+' &nbsp;·&nbsp; '+( currentUser||'—')+'</div>'
+    +'<table><thead><tr>'
+    +'<th style="min-width:180px">Продукт</th>'
+    +'<th style="text-align:center">Заявки</th>'
+    +'<th style="text-align:center">К пр-ву</th>'
+    +dayHeaders
+    +'</tr></thead><tbody>'+tableRows+totalRow+'</tbody></table>'
+    +'<div class="page-break">'
+    +'<h1>🗓️ Расписание по дням — '+week+'</h1>'
+    +'<div class="sub">Каждый день производства — отдельный блок</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px">'+dayCards+'</div>'
+    +'</div>'
+    +'</body></html>';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2100,6 +2341,7 @@ function switchTab(t){
 function showModal(id){
   document.getElementById(id).style.display='flex';
   if(id==='setupModal'){document.getElementById('sbUrl').value=sbUrl;document.getElementById('sbKey').value=sbKey;}
+  if(id==='meatModal'){editingSched=null;renderMeatSchedGrid();}
   if(id==='salesModal'){
     updateSalesHistCount();
     document.getElementById('slog').style.display='none';
@@ -2113,6 +2355,110 @@ function co(e,id){if(e.target.id===id)closeModal(id);}
 
 
 
+
+
+// ═══════════════════════════════════════════════════════
+//  MEAT SCHEDULE EDITOR
+// ═══════════════════════════════════════════════════════
+const ALL_CATS = ['Индейка','Курица','Лосось','Кролик','Телятина','Овощи','Творог','Брынза','Другое'];
+
+const CAT_COLORS_MODAL = {
+  'Индейка':'#f7a94f','Курица':'#ffd166','Лосось':'#f4857a',
+  'Кролик':'#a8d8a8','Телятина':'#c9b1ff','Овощи':'#6fcf97',
+  'Творог':'#74c0fc','Брынза':'#f4c2c2','Другое':'#8a93b0',
+};
+
+function showMeatSchedModal(){
+  renderMeatSchedGrid();
+  showModal('meatModal');
+}
+
+function renderMeatSchedGrid(){
+  const sched = getMeatSchedule();
+  const grid = document.getElementById('meatSchedGrid');
+  if(!grid) return;
+
+  grid.innerHTML = DAYS.map(d => {
+    const assigned = sched[d.key] || [];
+    const pills = ALL_CATS.map(cat => {
+      const active = assigned.includes(cat);
+      const col = CAT_COLORS_MODAL[cat] || '#8a93b0';
+      return `<span onclick="toggleMeatCat('${d.key}','${cat}')" id="mp-${d.key}-${cat.replace(/[^a-zа-я]/gi,'_')}"
+        style="display:inline-block;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;cursor:pointer;
+               border:1px solid ${active ? col : 'var(--border)'};
+               background:${active ? col+'22' : 'transparent'};
+               color:${active ? col : 'var(--text3)'};
+               transition:all .15s;margin:2px;user-select:none"
+        title="${active ? 'Убрать из '+d.full : 'Добавить в '+d.full}">
+        ${cat}${active ? ' ✓' : ''}
+      </span>`;
+    }).join('');
+
+    return `<div style="background:var(--bg3);border:1px solid ${d.color}44;border-left:3px solid ${d.color};border-radius:8px;padding:10px 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-weight:800;font-size:12px;min-width:95px">${d.full}</span>
+        <span style="font-size:9px;color:var(--text3)" id="ms-summary-${d.key}">
+          ${assigned.length ? assigned.join(', ') : '— ничего не назначено'}
+        </span>
+      </div>
+      <div id="ms-pills-${d.key}">${pills}</div>
+    </div>`;
+  }).join('');
+}
+
+// Temporary schedule state while editing
+let editingSched = null;
+
+function toggleMeatCat(dayKey, cat){
+  if(!editingSched) editingSched = getMeatSchedule();
+  if(!editingSched[dayKey]) editingSched[dayKey] = [];
+
+  const idx = editingSched[dayKey].indexOf(cat);
+  if(idx >= 0) editingSched[dayKey].splice(idx, 1);
+  else editingSched[dayKey].push(cat);
+
+  // Update pill appearance
+  const safeId = cat.replace(/[^a-zа-я]/gi,'_');
+  const pill = document.getElementById('mp-'+dayKey+'-'+safeId);
+  const col = CAT_COLORS_MODAL[cat] || '#8a93b0';
+  const active = editingSched[dayKey].includes(cat);
+  if(pill){
+    pill.style.border = '1px solid ' + (active ? col : 'var(--border)');
+    pill.style.background = active ? col+'22' : 'transparent';
+    pill.style.color = active ? col : 'var(--text3)';
+    pill.textContent = cat + (active ? ' ✓' : '');
+  }
+
+  // Update summary
+  const summary = document.getElementById('ms-summary-'+dayKey);
+  if(summary) summary.textContent = editingSched[dayKey].length
+    ? editingSched[dayKey].join(', ')
+    : '— ничего не назначено';
+}
+
+function saveMeatSched(){
+  const sched = editingSched || getMeatSchedule();
+  saveMeatSchedule(sched);
+  editingSched = null;
+  renderDays(); // update sidebar chips
+  closeModal('meatModal');
+  toast('✅ Расписание сырья сохранено');
+  // Recalculate if plan exists
+  if(planResult){
+    const needs = calcNeeds();
+    const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+    planResult = buildPlan(needs, activeDaysList);
+    renderPlan(needs, activeDaysList);
+    renderSched(planResult, activeDaysList);
+  }
+}
+
+function resetMeatSched(){
+  if(!confirm('Сбросить расписание на стандартное?')) return;
+  editingSched = JSON.parse(JSON.stringify(DEFAULT_MEAT_SCHEDULE));
+  renderMeatSchedGrid();
+  toast('Расписание сброшено на стандартное','warn');
+}
 
 // ═══════════════════════════════════════════════════════
 //  SKU MANAGER

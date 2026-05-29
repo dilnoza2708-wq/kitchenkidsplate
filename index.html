@@ -1239,12 +1239,17 @@ function renderABCLayout(totals,matrix,area,recoHtml){
 // ═══════════════════════════════════════════════════════
 function getForecast(code) {
   // 1. IIKO sales history (расход) → Weighted Moving Average
+  // Use ALL weeks including zeros — zeros mean "не продавали в эту неделю"
   if (salesHistory[code] && salesHistory[code].length > 0) {
     const arr = salesHistory[code].slice(-8);
-    let wSum = 0, wTot = 0;
-    arr.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
-    const wma = wTot > 0 ? wSum / wTot : 0;
-    if (wma > 0) return Math.ceil(wma * 1.1);
+    const nonZero = arr.filter(v => v > 0);
+    if (nonZero.length > 0) {
+      // WMA only over non-zero weeks to avoid dilution by empty periods
+      let wSum = 0, wTot = 0;
+      nonZero.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
+      const wma = wTot > 0 ? wSum / wTot : 0;
+      return Math.ceil(wma * 1.1);
+    }
   }
 
   // 2. Order history snapshots (saved weeks in this app)
@@ -1259,11 +1264,12 @@ function getForecast(code) {
     weekly.push(tot);
   });
   if (weekly.length >= 1) {
-    const slice = weekly.slice(-6);
-    let wSum = 0, wTot = 0;
-    slice.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
-    const avg = wTot > 0 ? wSum / wTot : 0;
-    if (avg > 0) return Math.ceil(avg * 1.1);
+    const nonZero = weekly.filter(v => v > 0);
+    if (nonZero.length > 0) {
+      let wSum = 0, wTot = 0;
+      nonZero.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
+      return Math.ceil((wTot > 0 ? wSum / wTot : 0) * 1.1);
+    }
   }
 
   return 0;
@@ -1312,11 +1318,16 @@ function calcNeeds() {
 async function genPlan(){
   // Always reload fresh from storage before calculating
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
+  extraProducts = JSON.parse(localStorage.getItem('kp_extra_products') || '[]');
   const btn=document.getElementById('genBtn');
   btn.classList.add('ld'); btn.disabled=true;
   const panel=document.getElementById('aiPanel');
   panel.style.display='block'; panel.innerHTML='';
-  addAI('⏳ Анализирую заявки и остатки…');
+
+  // Quick diagnostic before heavy calc
+  const shTotal = Object.keys(salesHistory).length;
+  const shNonZero = Object.keys(salesHistory).filter(k=>salesHistory[k].some(v=>v>0)).length;
+  addAI('⏳ Данные: '+shNonZero+' товаров с ненулевым расходом из '+shTotal+' в истории. Считаю потребности…');
   const activeDaysList=DAYS.filter(d=>activeDays[d.key]);
   const needs=calcNeeds();
   const modeDesc={orders:'только по заявкам',forecast:'только по прогнозу истории продаж',combined:'автоматически — берём максимум из заявок и прогноза'}[planMode];
@@ -1361,17 +1372,25 @@ function buildPlan(needs,activeDaysList){
 function renderPlan(needs,activeDaysList){
   const area=document.getElementById('planArea');
   if(!needs.length){
-    const shKeys = Object.keys(salesHistory).filter(k=>salesHistory[k]&&salesHistory[k].length>0);
-    const maxWeeks = shKeys.length > 0 ? Math.max(...shKeys.map(k=>salesHistory[k].length)) : 0;
+    const shAll = Object.keys(salesHistory).filter(k=>salesHistory[k]&&salesHistory[k].length>0);
+    const shNZ = shAll.filter(k=>salesHistory[k].some(v=>v>0));
+    const maxWeeks = shAll.length > 0 ? Math.max(...shAll.map(k=>salesHistory[k].length)) : 0;
     const modeLabel2 = planMode==='orders'?'По заявкам':planMode==='forecast'?'По прогнозу':'Авто';
     let hint2 = '';
-    if(planMode==='orders') hint2='<br><span style="color:var(--orange)">→ В режиме «По заявкам» нужны заявки во вкладке ✏️, или переключитесь на ⚖️ Авто</span>';
-    else if(shKeys.length===0) hint2='<br><span style="color:var(--orange)">→ Загрузите оборотно-сальдовую ведомость через «⬆ Загрузить из IIKO» в сайдбаре — получите данные расхода для прогноза</span>';
-    else hint2='<br><span style="color:var(--green)">→ История есть. Нажмите ✨ Сгенерировать план ещё раз</span>';
+    if(planMode==='orders'){
+      hint2='<br><span style="color:var(--orange)">→ Режим «По заявкам» — нужны заявки во вкладке ✏️ Заявки, или переключитесь на ⚖️ Авто / 🔮 Прогноз</span>';
+    } else if(shAll.length===0){
+      hint2='<br><span style="color:var(--orange)">→ Загрузите оборотно-сальдовую ведомость через «⬆ Загрузить из IIKO» в сайдбаре</span>';
+    } else if(shNZ.length===0){
+      hint2='<br><span style="color:var(--red)">⚠️ История загружена, но расход по всем товарам = 0. Проверьте что загружаете правильный файл (нужна колонка «Расход → Кол-во»)</span>';
+    } else {
+      hint2='<br><span style="color:var(--green)">→ Данные есть ('+shNZ.length+' товаров с расходом). Нажмите ✨ Сгенерировать план ещё раз</span>';
+    }
     area.innerHTML='<div class="empty"><div class="ei">📋</div><div class="et">Нет данных для плана</div>'
       +'<div class="es" style="text-align:left;max-width:380px;line-height:1.9">'
       +'Режим: <strong>'+modeLabel2+'</strong><br>'
-      +'История IIKO: <strong style="color:'+(shKeys.length?'var(--green)':'var(--red)')+'">'+shKeys.length+' товаров, '+maxWeeks+' нед.</strong>'
+      +'История IIKO (все): <strong style="color:'+(shAll.length?'var(--green)':'var(--red)')+'">'+shAll.length+' товаров, '+maxWeeks+' нед.</strong><br>'
+      +'Из них с ненулевым расходом: <strong style="color:'+(shNZ.length?'var(--green)':'var(--red)')+'">'+shNZ.length+' товаров</strong>'
       +hint2+'</div></div>';
     return;
   }

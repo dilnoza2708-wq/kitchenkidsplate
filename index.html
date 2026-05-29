@@ -1361,20 +1361,18 @@ function buildPlan(needs,activeDaysList){
 function renderPlan(needs,activeDaysList){
   const area=document.getElementById('planArea');
   if(!needs.length){
-    // Diagnostic: show why plan is empty
     const shKeys = Object.keys(salesHistory).filter(k=>salesHistory[k]&&salesHistory[k].length>0);
     const maxWeeks = shKeys.length > 0 ? Math.max(...shKeys.map(k=>salesHistory[k].length)) : 0;
-    area.innerHTML=`<div class="empty">
-      <div class="ei">📋</div>
-      <div class="et">Нет данных для плана</div>
-      <div class="es" style="text-align:left;max-width:380px;line-height:1.9">
-        Режим: <strong>${{planMode==='orders'?'По заявкам':planMode==='forecast'?'По прогнозу':'Авто (заявки + прогноз)'}}</strong><br>
-        История расходов IIKO: <strong style="color:${{shKeys.length?'var(--green)':'var(--red)'}}">${{shKeys.length}} товаров, ${{maxWeeks}} нед.</strong><br><br>
-        ${{planMode==='orders'?'<span style="color:var(--orange)">→ В режиме «По заявкам» нужны заявки. Введите их во вкладке ✏️ Заявки или переключитесь на режим ⚖️ Авто</span>':''}}
-        ${{shKeys.length===0?'<span style="color:var(--orange)">→ Загрузите расширенную оборотно-сальдовую ведомость через кнопку в сайдбаре «⬆ Загрузить из IIKO» — она даст данные о расходе для прогноза</span>':''}}
-        ${{shKeys.length>0&&planMode!=='orders'?'<span style="color:var(--green)">→ История есть, нажмите ✨ Сгенерировать план ещё раз</span>':''}}
-      </div>
-    </div>`;
+    const modeLabel2 = planMode==='orders'?'По заявкам':planMode==='forecast'?'По прогнозу':'Авто';
+    let hint2 = '';
+    if(planMode==='orders') hint2='<br><span style="color:var(--orange)">→ В режиме «По заявкам» нужны заявки во вкладке ✏️, или переключитесь на ⚖️ Авто</span>';
+    else if(shKeys.length===0) hint2='<br><span style="color:var(--orange)">→ Загрузите оборотно-сальдовую ведомость через «⬆ Загрузить из IIKO» в сайдбаре — получите данные расхода для прогноза</span>';
+    else hint2='<br><span style="color:var(--green)">→ История есть. Нажмите ✨ Сгенерировать план ещё раз</span>';
+    area.innerHTML='<div class="empty"><div class="ei">📋</div><div class="et">Нет данных для плана</div>'
+      +'<div class="es" style="text-align:left;max-width:380px;line-height:1.9">'
+      +'Режим: <strong>'+modeLabel2+'</strong><br>'
+      +'История IIKO: <strong style="color:'+(shKeys.length?'var(--green)':'var(--red)')+'">'+shKeys.length+' товаров, '+maxWeeks+' нед.</strong>'
+      +hint2+'</div></div>';
     return;
   }
   const groups=[...new Set(needs.map(p=>p.group))];

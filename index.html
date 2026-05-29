@@ -271,6 +271,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       <button class="tab" onclick="switchTab('plan')" id="tb-plan">📋 План</button>
       <button class="tab" onclick="switchTab('schedule')" id="tb-schedule">🗓️ По дням</button>
       <button class="tab" onclick="switchTab('sales')" id="tb-sales" style="color:#a78bfa">🔮 Средние продажи</button>
+      <button class="tab" onclick="showSKUModal()" id="tb-sku" style="color:var(--orange)">📦 SKU</button>
       <button class="tab" onclick="switchTab('abc')" id="tb-abc">📈 ABC/XYZ</button>
       <button class="tab" onclick="switchTab('history')" id="tb-history">🕒 История</button>
       <button class="tab" onclick="showModal('setupModal')" id="tb-setup" style="margin-left:auto;color:var(--orange)">⚙️ Supabase</button>
@@ -431,6 +432,56 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
   </div>
 </div>
 
+
+<!-- MODAL: Add/Manage SKU -->
+<div id="skuModal" class="moverlay" style="display:none" onclick="co(event,'skuModal')">
+  <div class="modal" style="width:520px;max-height:90vh;overflow-y:auto">
+    <h3>📦 Управление товарами (SKU)</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+      Здесь можно добавить товары которых нет в базовом списке, или удалить ненужные пользовательские SKU.
+    </p>
+
+    <!-- Add new SKU form -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
+      <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:10px">➕ Добавить новый товар</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label class="flbl">Код (SKU)</label><input class="finp" id="skuCode" placeholder="напр. 99001"></div>
+        <div><label class="flbl">Категория</label>
+          <select class="fsel" id="skuCat">
+            <option>Индейка</option><option>Курица</option><option>Лосось</option>
+            <option>Кролик</option><option>Телятина</option><option>Овощи</option>
+            <option>Творог</option><option>Другое</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:8px"><label class="flbl">Название товара</label><input class="finp" id="skuName" placeholder="напр. Котлеты из индейки XL, 300 гр"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div><label class="flbl">Группа</label>
+          <select class="fsel" id="skuGroup">
+            <option>Котлеты/тефтели/фрикадельки</option>
+            <option>Пельмени/манты/вареники</option>
+            <option>Family Plate</option>
+            <option>Сырники/выпечка</option>
+            <option>Другое</option>
+          </select>
+        </div>
+        <div><label class="flbl">Средние продажи/нед (опц.)</label><input class="finp" id="skuBaseSales" type="number" min="0" placeholder="0"></div>
+      </div>
+      <button class="btn-prim" onclick="addSKU()" style="width:100%;justify-content:center"><span class="btxt">➕ Добавить товар</span></button>
+    </div>
+
+    <!-- Custom products list -->
+    <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px">
+      Добавленные вручную (<span id="extraCount">0</span>)
+    </div>
+    <div id="extraList" style="max-height:260px;overflow-y:auto"></div>
+
+    <div class="mbrow" style="margin-top:14px">
+      <button class="btn-out" onclick="closeModal('skuModal');if(currentUser)renderInputTable();renderBaseSales();" style="flex:1">✅ Готово</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Sales History Import -->
 <div id="salesModal" class="moverlay" style="display:none" onclick="co(event,'salesModal')">
   <div class="modal" style="width:480px">
@@ -507,6 +558,9 @@ const PRODUCTS = [
   {code:'100219',name:'Family Plate Блинчики с творогом 4шт',cat:'Творог',group:'Family Plate'},
 ];
 
+// Helper: always use this instead of PRODUCTS directly — includes user-added SKUs
+function allProducts(){ return [...PRODUCTS, ...extraProducts]; }
+
 const SOURCES = [
   {key:'sabina',label:'Сабина',color:'#4f8ef7'},
   {key:'shops',label:'Магазины',color:'#2dd98f'},
@@ -552,6 +606,9 @@ let planResult = null;
 let pendingImport = null;
 // Planning mode: 'orders' | 'forecast' | 'combined'
 let planMode = localStorage.getItem('kp_plan_mode') || 'combined';
+let baseSales = JSON.parse(localStorage.getItem('kp_base_sales') || '{}'); // ← moved up so getForecast always sees it
+// Custom products added by users (in addition to hardcoded PRODUCTS)
+let extraProducts = JSON.parse(localStorage.getItem('kp_extra_products') || '[]');
 // Sales history: { productCode: [weeklyQty, ...] } — loaded from IIKO sales file or history
 let salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
 let pendingSalesImport = null;
@@ -745,6 +802,9 @@ function renderOnline(){
 //  INIT
 // ═══════════════════════════════════════════════════════
 function init(){
+  // Always reload persisted data fresh on start
+  baseSales = JSON.parse(localStorage.getItem('kp_base_sales') || '{}');
+  salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
   document.getElementById('weekSel').value=currentWeek;
   loadOrdersLocal();
   renderDays();
@@ -809,7 +869,7 @@ function toggleDay(k){
 //  STOCK
 // ═══════════════════════════════════════════════════════
 function renderStock(){
-  const items=PRODUCTS.map(p=>({...p,qty:stock[p.code]??0})).sort((a,b)=>a.qty-b.qty);
+  const items=allProducts().map(p=>({...p,qty:stock[p.code]??0})).sort((a,b)=>a.qty-b.qty);
   document.getElementById('stockList').innerHTML=items.map(p=>`
     <div class="srow"><div class="sn" title="${p.name}">${p.name}</div>
     <div class="sq ${p.qty<15?'low':'ok'}">${p.qty}</div></div>`).join('');
@@ -825,7 +885,7 @@ function showInputTable(){
   renderInputTable();
 }
 function renderInputTable(){
-  const groups=[...new Set(PRODUCTS.map(p=>p.group))];
+  const groups=[...new Set(allProducts().map(p=>p.group))];
   let h=`<thead><tr>
     <th style="min-width:200px">Продукт</th>
     <th class="c">Склад</th>
@@ -837,7 +897,7 @@ function renderInputTable(){
   </tr></thead><tbody>`;
   for(const g of groups){
     h+=`<tr class="crow"><td colspan="${4+SOURCES.length+3}">${g}</td></tr>`;
-    for(const p of PRODUCTS.filter(x=>x.group===g)){
+    for(const p of allProducts().filter(x=>x.group===g)){
       const o=orders[p.code]||{};
       const tot=SOURCES.reduce((s,src)=>s+(Number(o[src.key])||0),0);
       const fc=getForecast(p.code);
@@ -1192,7 +1252,7 @@ function renderABCLayout(totals,matrix,area,recoHtml){
 
 // baseSales: manually entered avg weekly sales per product { code: qty }
 // Loaded from localStorage, editable in UI
-let baseSales = JSON.parse(localStorage.getItem('kp_base_sales') || '{}');
+// baseSales declared at top of state
 
 // Returns forecast qty for a product.
 // Priority: salesHistory (uploaded IIKO) → baseSales (manual) → stock turnover proxy
@@ -1239,7 +1299,7 @@ function getForecast(code) {
 //  GENERATE PLAN
 // ═══════════════════════════════════════════════════════
 function calcNeeds() {
-  return PRODUCTS.map(p => {
+  return allProducts().map(p => {
     const o = orders[p.code] || {};
     const orderTotal = SOURCES.reduce((s, src) => s + (Number(o[src.key]) || 0), 0);
     const forecast = getForecast(p.code);
@@ -1533,7 +1593,7 @@ async function applyImport(){
   // 2. Append sales (расход) to salesHistory
   const salesData = pendingImport.sales;
   let salesAdded = 0;
-  PRODUCTS.forEach(p => {
+  allProducts().forEach(p => {
     if(!salesHistory[p.code]) salesHistory[p.code] = [];
     const qty = salesData[p.code] || 0;
     salesHistory[p.code].push(qty);
@@ -1566,7 +1626,7 @@ async function applyImport(){
 // ═══════════════════════════════════════════════════════
 function exportOrdersCSV(){
   let c='\uFEFFПродукт,Категория,'+SOURCES.map(s=>s.label).join(',')+',Итого,К производству\n';
-  PRODUCTS.forEach(p=>{
+  allProducts().forEach(p=>{
     const o=orders[p.code]||{};
     const tot=SOURCES.reduce((s,src)=>s+(Number(o[src.key])||0),0);
     if(!tot)return;
@@ -1996,7 +2056,7 @@ function updateSalesHistCount(){
 function renderBaseSales(){
   const area=document.getElementById('salesBaseArea');
   if(!area)return;
-  const groups=[...new Set(PRODUCTS.map(p=>p.group))];
+  const groups=[...new Set(allProducts().map(p=>p.group))];
   const hasSalesHist=Object.values(salesHistory).some(a=>a.length>0);
   let banner=hasSalesHist
     ? `<div style="background:rgba(45,217,143,.08);border:1px solid rgba(45,217,143,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--green)">
@@ -2017,7 +2077,7 @@ function renderBaseSales(){
   </tr></thead><tbody>`;
   for(const g of groups){
     h+=`<tr class="crow"><td colspan="7">${g}</td></tr>`;
-    for(const p of PRODUCTS.filter(x=>x.group===g)){
+    for(const p of allProducts().filter(x=>x.group===g)){
       const base=baseSales[p.code]||'';
       const fc=getForecast(p.code);
       const st=stock[p.code]??0;
@@ -2058,9 +2118,12 @@ function updateBaseSale(code,val){
 
 function saveBaseSales(){
   localStorage.setItem('kp_base_sales',JSON.stringify(baseSales));
+  // Re-read to guarantee getForecast uses latest data
+  baseSales = JSON.parse(localStorage.getItem('kp_base_sales') || '{}');
   toast('Средние продажи сохранены ✅');
   if(currentUser)renderInputTable();
   renderDash();
+  renderBaseSales();
 }
 
 function clearBaseSales(){
@@ -2096,6 +2159,83 @@ function showModal(id){
 }
 function closeModal(id){document.getElementById(id).style.display='none';}
 function co(e,id){if(e.target.id===id)closeModal(id);}
+
+
+// ═══════════════════════════════════════════════════════
+//  SKU MANAGER
+// ═══════════════════════════════════════════════════════
+function showSKUModal(){
+  renderExtraList();
+  showModal('skuModal');
+}
+
+function addSKU(){
+  const code = document.getElementById('skuCode').value.trim();
+  const name = document.getElementById('skuName').value.trim();
+  const cat  = document.getElementById('skuCat').value;
+  const group= document.getElementById('skuGroup').value;
+  const bs   = Number(document.getElementById('skuBaseSales').value) || 0;
+
+  if(!code){ toast('Введите код товара','warn'); return; }
+  if(!name){ toast('Введите название товара','warn'); return; }
+
+  // Check duplicate
+  if(allProducts().find(p => p.code === code)){
+    toast('Товар с таким кодом уже существует','warn'); return;
+  }
+
+  const newProduct = { code, name, cat, group, _custom: true };
+  extraProducts.push(newProduct);
+  localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
+
+  // Save base sales if provided
+  if(bs > 0){
+    baseSales[code] = bs;
+    localStorage.setItem('kp_base_sales', JSON.stringify(baseSales));
+  }
+
+  // Clear form
+  document.getElementById('skuCode').value = '';
+  document.getElementById('skuName').value = '';
+  document.getElementById('skuBaseSales').value = '';
+
+  renderExtraList();
+  toast(`✅ Добавлен: ${name}`);
+}
+
+function deleteSKU(code){
+  if(!confirm('Удалить этот товар из списка?')) return;
+  extraProducts = extraProducts.filter(p => p.code !== code);
+  localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
+  renderExtraList();
+  toast('Товар удалён','warn');
+}
+
+function renderExtraList(){
+  const el = document.getElementById('extraList');
+  const cnt = document.getElementById('extraCount');
+  if(cnt) cnt.textContent = extraProducts.length;
+  if(!extraProducts.length){
+    el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:8px 0;font-style:italic">Нет добавленных товаров</div>';
+    return;
+  }
+  el.innerHTML = extraProducts.map(p => {
+    const c = CC[p.cat] || '#8a93b0';
+    const bs = baseSales[p.code] || 0;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(36,42,62,.5)">
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:600;color:var(--text)">${p.name}</div>
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:var(--text3)">${p.code}</span>
+          <span class="mpill" style="background:${c}22;color:${c};font-size:9px">${p.cat}</span>
+          <span style="font-size:9px;color:var(--text3)">${p.group}</span>
+          ${bs>0?`<span style="font-size:9px;color:#a78bfa">ср.продажи: ${bs}/нед</span>`:''}
+        </div>
+      </div>
+      <button onclick="deleteSKU('${p.code}')" style="background:rgba(240,82,82,.1);border:1px solid rgba(240,82,82,.3);color:var(--red);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer">✕</button>
+    </div>`;
+  }).join('');
+}
 
 // ═══════════════════════════════════════════════════════
 //  START

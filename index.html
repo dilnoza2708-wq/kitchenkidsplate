@@ -363,10 +363,19 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 <div id="meatModal" class="moverlay" style="display:none" onclick="co(event,'meatModal')">
   <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
     <h3>🥩 Расписание сырья по дням</h3>
-    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+    <p style="font-size:10px;color:var(--text2);margin-bottom:10px;line-height:1.6">
       Назначьте какие категории сырья производятся в каждый день.<br>
-      Одна категория может быть в нескольких днях (например Курица и в ПН и в ВТ).
+      Одна категория может быть в нескольких днях.
     </p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      <button onclick="applySmartDefault()" class="btn-save" style="font-size:10px;padding:5px 10px">
+        ✨ Применить стандартное расписание
+      </button>
+      <button onclick="assignAllToDay('fri')" class="btn-out" style="font-size:10px;padding:5px 10px" title="Назначить нераспределённые категории на Пятницу">
+        + Добавить всё в ПТ
+      </button>
+    </div>
+    <div id="unassignedCatsWarning" style="display:none;background:rgba(247,147,79,.08);border:1px solid rgba(247,147,79,.3);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:var(--orange)"></div>
     <div id="meatSchedGrid" style="display:flex;flex-direction:column;gap:10px"></div>
     <div class="mbrow" style="margin-top:16px">
       <button class="btn-prim" onclick="saveMeatSched()" style="flex:1"><span class="btxt">💾 Сохранить расписание</span></button>
@@ -2443,7 +2452,7 @@ function switchTab(t){
 function showModal(id){
   document.getElementById(id).style.display='flex';
   if(id==='setupModal'){document.getElementById('sbUrl').value=sbUrl;document.getElementById('sbKey').value=sbKey;}
-  if(id==='meatModal'){editingSched=null;renderMeatSchedGrid();}
+  if(id==='meatModal'){editingSched=null;renderMeatSchedGrid();setTimeout(checkUnassignedCats,50);}
   if(id==='salesModal'){
     updateSalesHistCount();
     document.getElementById('slog').style.display='none';
@@ -2462,13 +2471,20 @@ function co(e,id){if(e.target.id===id)closeModal(id);}
 // ═══════════════════════════════════════════════════════
 //  MEAT SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════
-const ALL_CATS = ['Индейка','Курица','Лосось','Кролик','Телятина','Овощи','Творог','Брынза','Другое'];
+// Build category list dynamically from actual products + known defaults
+function getAllCats(){
+  const fromProducts = [...new Set(allProducts().map(p=>p.cat).filter(Boolean))];
+  const defaults = ['Индейка','Курица','Лосось','Кролик','Телятина','Овощи','Творог','Брынза'];
+  const merged = [...new Set([...defaults, ...fromProducts])];
+  return merged;
+}
 
 const CAT_COLORS_MODAL = {
   'Индейка':'#f7a94f','Курица':'#ffd166','Лосось':'#f4857a',
   'Кролик':'#a8d8a8','Телятина':'#c9b1ff','Овощи':'#6fcf97',
   'Творог':'#74c0fc','Брынза':'#f4c2c2','Другое':'#8a93b0',
 };
+function getCatColor(cat){ return CAT_COLORS_MODAL[cat]||CC[cat]||'#8a93b0'; }
 
 function showMeatSchedModal(){
   renderMeatSchedGrid();
@@ -2482,9 +2498,9 @@ function renderMeatSchedGrid(){
 
   grid.innerHTML = DAYS.map(d => {
     const assigned = sched[d.key] || [];
-    const pills = ALL_CATS.map(cat => {
+    const pills = getAllCats().map(cat => {
       const active = assigned.includes(cat);
-      const col = CAT_COLORS_MODAL[cat] || '#8a93b0';
+      const col = getCatColor(cat);
       return `<span onclick="toggleMeatCat('${d.key}','${cat}')" id="mp-${d.key}-${cat.replace(/[^a-zа-я]/gi,'_')}"
         style="display:inline-block;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:700;cursor:pointer;
                border:1px solid ${active ? col : 'var(--border)'};
@@ -2522,7 +2538,7 @@ function toggleMeatCat(dayKey, cat){
   // Update pill appearance
   const safeId = cat.replace(/[^a-zа-я]/gi,'_');
   const pill = document.getElementById('mp-'+dayKey+'-'+safeId);
-  const col = CAT_COLORS_MODAL[cat] || '#8a93b0';
+  const col = getCatColor(cat);
   const active = editingSched[dayKey].includes(cat);
   if(pill){
     pill.style.border = '1px solid ' + (active ? col : 'var(--border)');
@@ -2540,6 +2556,11 @@ function toggleMeatCat(dayKey, cat){
 
 function saveMeatSched(){
   const sched = editingSched || getMeatSchedule();
+  // Warn if unassigned cats exist, but still allow save
+  const allCats = getAllCats();
+  const assigned = new Set(Object.values(sched).flat());
+  const unassigned = allCats.filter(cat => !assigned.has(cat));
+  if(unassigned.length && !confirm('Категории без дня: ' + unassigned.join(', ') + '\nТовары этих категорий не попадут в план. Сохранить всё равно?')) return;
   saveMeatSchedule(sched);
   editingSched = null;
   renderDays(); // update sidebar chips
@@ -2557,9 +2578,61 @@ function saveMeatSched(){
 
 function resetMeatSched(){
   if(!confirm('Сбросить расписание на стандартное?')) return;
-  editingSched = JSON.parse(JSON.stringify(DEFAULT_MEAT_SCHEDULE));
+  applySmartDefault();
+}
+
+// Build smart default schedule from actual product categories
+function applySmartDefault(){
+  const allCats = getAllCats();
+  // Standard rules
+  const rules = {
+    'Индейка':['mon'],'Курица':['mon'],'Лосось':['tue'],
+    'Кролик':['wed'],'Телятина':['wed'],'Овощи':['thu'],
+    'Творог':['fri'],'Брынза':['fri'],
+  };
+  editingSched = { mon:[], tue:[], wed:[], thu:[], fri:[], sat:[] };
+  allCats.forEach(cat => {
+    const days = rules[cat] || ['fri']; // unknown cats → friday
+    days.forEach(d => {
+      if(!editingSched[d]) editingSched[d] = [];
+      if(!editingSched[d].includes(cat)) editingSched[d].push(cat);
+    });
+  });
   renderMeatSchedGrid();
-  toast('Расписание сброшено на стандартное','warn');
+  checkUnassignedCats();
+  toast('✅ Стандартное расписание применено');
+}
+
+// Assign all unassigned categories to a given day
+function assignAllToDay(dayKey){
+  if(!editingSched) editingSched = getMeatSchedule();
+  const allCats = getAllCats();
+  const assigned = new Set(Object.values(editingSched).flat());
+  const unassigned = allCats.filter(c => !assigned.has(c));
+  if(!unassigned.length){ toast('Все категории уже назначены','warn'); return; }
+  if(!editingSched[dayKey]) editingSched[dayKey] = [];
+  unassigned.forEach(cat => {
+    if(!editingSched[dayKey].includes(cat)) editingSched[dayKey].push(cat);
+  });
+  renderMeatSchedGrid();
+  checkUnassignedCats();
+  toast('Добавлено ' + unassigned.length + ' категорий');
+}
+
+// Show warning about unassigned categories
+function checkUnassignedCats(){
+  const sched = editingSched || getMeatSchedule();
+  const allCats = getAllCats();
+  const assigned = new Set(Object.values(sched).flat());
+  const unassigned = allCats.filter(cat => !assigned.has(cat));
+  const warn = document.getElementById('unassignedCatsWarning');
+  if(!warn) return;
+  if(unassigned.length){
+    warn.style.display = 'block';
+    warn.innerHTML = '⚠️ Не назначены на ни один день: <strong>' + unassigned.join(', ') + '</strong> — товары этих категорий не попадут в план';
+  } else {
+    warn.style.display = 'none';
+  }
 }
 
 // ═══════════════════════════════════════════════════════

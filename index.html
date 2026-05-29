@@ -403,7 +403,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       Файл <strong>«Расширенная оборотно-сальдовая ведомость»</strong> из IIKO.<br>
       Автоматически считываются <strong>два показателя</strong> за один раз:<br>
       &nbsp;📦 <strong>Остатки на конец → Кол-во</strong> — обновляет склад<br>
-      &nbsp;📈 <strong>Расход → Кол-во</strong> — добавляется в историю продаж для прогноза<br>
+      &nbsp;📈 <strong>Расход / Продажи → Кол-во</strong> — добавляется в историю продаж для прогноза<br>
       <span style="color:var(--orange)">Загружайте каждую неделю — прогноз будет точнее.</span>
     </p>
     <div class="dzone" id="dzone" onclick="document.getElementById('iikoFile').click()" ondragover="odv(event)" ondragleave="odl(event)" ondrop="odr(event)">
@@ -1382,7 +1382,7 @@ function renderPlan(needs,activeDaysList){
     } else if(shAll.length===0){
       hint2='<br><span style="color:var(--orange)">→ Загрузите оборотно-сальдовую ведомость через «⬆ Загрузить из IIKO» в сайдбаре</span>';
     } else if(shNZ.length===0){
-      hint2='<br><span style="color:var(--red)">⚠️ История загружена, но расход по всем товарам = 0. Проверьте что загружаете правильный файл (нужна колонка «Расход → Кол-во»)</span>';
+      hint2='<br><span style="color:var(--red)">⚠️ История загружена, но продажи по всем товарам = 0. Проблема: в файле не найдена колонка «Расход» или «Продажи». Откройте «⬆ Загрузить из IIKO» и посмотрите в логе какие колонки найдены</span>';
     } else {
       hint2='<br><span style="color:var(--green)">→ Данные есть ('+shNZ.length+' товаров с расходом). Нажмите ✨ Сгенерировать план ещё раз</span>';
     }
@@ -1509,16 +1509,22 @@ function odr(e){e.preventDefault();document.getElementById('dzone').classList.re
 // ─────────────────────────────────────────────────────
 //  Universal IIKO column finder
 // ─────────────────────────────────────────────────────
-function findIIKOCol(grpRow, hdr, groupName, fallback){
-  let groupStart = -1;
-  for(let c = 0; c < grpRow.length; c++){
-    if(String(grpRow[c]).includes(groupName)){ groupStart = c; break; }
-  }
-  if(groupStart >= 0){
-    for(let c = groupStart; c < Math.min(hdr.length, groupStart + 8); c++){
-      if(String(hdr[c]).trim() === 'Кол-во') return c;
+function findIIKOCol(grpRow, hdr, groupNames, fallback){
+  // groupNames can be a string or array of strings to try
+  const names = Array.isArray(groupNames) ? groupNames : [groupNames];
+  for(const groupName of names){
+    let groupStart = -1;
+    for(let c = 0; c < grpRow.length; c++){
+      if(String(grpRow[c]).toLowerCase().includes(groupName.toLowerCase())){ groupStart = c; break; }
+    }
+    if(groupStart >= 0){
+      for(let c = groupStart; c < Math.min(hdr.length, groupStart + 8); c++){
+        const cell = String(hdr[c]).trim().toLowerCase();
+        if(cell === 'кол-во' || cell === 'количество' || cell === 'qty') return c;
+      }
     }
   }
+  // Also scan entire header row for standalone "Кол-во" near the right area
   return fallback;
 }
 
@@ -1546,11 +1552,15 @@ function handleIIKO(file){
 
       // Find "Остатки на конец → Кол-во"
       const stockCol = findIIKOCol(grpRow, hdr, 'Остатки на конец', 28);
-      ilog(`✓ Колонка остатков (Остатки на конец → Кол-во): ${stockCol+1}`,'ok');
+      // Log all group-level header names so user can see what columns exist
+      const groupHeaders = grpRow.map((v,i)=>v?`[${i+1}]${String(v).substring(0,15)}`:'').filter(Boolean);
+      ilog('Группы колонок: '+groupHeaders.join(', '),'ok');
+
+      ilog('✓ Колонка остатков: '+(stockCol+1),'ok');
 
       // Find "Расход → Кол-во" — actual sales/consumption
-      const salesCol = findIIKOCol(grpRow, hdr, 'Расход', 6);
-      ilog(`✓ Колонка расхода (Расход → Кол-во): ${salesCol+1}`,'ok');
+      const salesCol = findIIKOCol(grpRow, hdr, ['Расход', 'Продажи', 'Реализация', 'Отгружено', 'Sale', 'Расх'], 6);
+      ilog('✓ Колонка продаж найдена: ' + (salesCol+1),'ok');
 
       const parsedStock={}, parsedSales={};
       let matchedStock=0, matchedSales=0;
@@ -1989,14 +1999,19 @@ function handleSalesFile(file){
       const grpRow=rows[headerRow-1]||[];
       let salesCol=-1;
       // Look for "Расход" group then "Кол-во" under it
-      let rashodStart=-1;
-      for(let c=0;c<grpRow.length;c++){if(String(grpRow[c]).includes('Расход')){rashodStart=c;break;}}
-      if(rashodStart>=0){
-        for(let c=rashodStart;c<Math.min(hdr.length,rashodStart+6);c++){
-          if(String(hdr[c]).trim()==='Кол-во'){salesCol=c;break;}
+      // Search for sales column: try multiple possible group names
+      const salesGroupNames = ['Расход', 'Продажи', 'Реализация', 'Отгружено', 'Расх', 'Sale'];
+      for(const gname of salesGroupNames){
+        let gStart=-1;
+        for(let ci=0;ci<grpRow.length;ci++){if(String(grpRow[ci]).toLowerCase().includes(gname.toLowerCase())){gStart=ci;break;}}
+        if(gStart>=0){
+          for(let ci=gStart;ci<Math.min(hdr.length,gStart+6);ci++){
+            const cell=String(hdr[ci]).trim().toLowerCase();
+            if(cell==='кол-во'||cell==='количество'){salesCol=ci;break;}
+          }
         }
+        if(salesCol!==-1) break;
       }
-      // Fallback: try column index 6 (common in IIKO)
       if(salesCol===-1) salesCol=6;
       slog(`✓ Колонка продаж (Расход→Кол-во): ${salesCol+1}`,'ok');
       const parsed={};let matched=0;

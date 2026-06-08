@@ -442,6 +442,31 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
   </div>
 </div>
 
+
+<!-- MODAL: ABC Safety Settings -->
+<div id="safetyModal" class="moverlay" style="display:none" onclick="co(event,'safetyModal')">
+  <div class="modal" style="width:420px">
+    <h3>⚙️ Страховой запас по ABC классам</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+      Страховой запас добавляется к прогнозу при расчёте «К производству».<br>
+      <strong>Формула:</strong> К пр-ву = Прогноз × (1 + запас%) − Остаток склада
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px" id="safetyInputs">
+      <!-- rendered by renderSafetyInputs() -->
+    </div>
+    <div style="margin-top:14px;padding:10px;background:var(--bg3);border-radius:7px;font-size:10px;color:var(--text3)">
+      💡 <strong>A</strong> — топ 80% продаж (самые важные) &nbsp;·&nbsp;
+      <strong>B</strong> — следующие 15% &nbsp;·&nbsp;
+      <strong>C</strong> — редкие позиции
+    </div>
+    <div class="mbrow" style="margin-top:14px">
+      <button class="btn-prim" onclick="saveSafetySettings()" style="flex:1"><span class="btxt">💾 Сохранить</span></button>
+      <button class="btn-out" onclick="resetSafetySettings()">↩ По умолчанию</button>
+      <button class="btn-out" onclick="closeModal('safetyModal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Supabase Setup -->
 <div id="setupModal" class="moverlay" style="display:none" onclick="co(event,'setupModal')">
   <div class="modal" style="width:500px">
@@ -709,10 +734,16 @@ async function syncSettingToDB(key, value){
 }
 
 // ── ABC-based safety stock multipliers ──
-// A = high volume → bigger buffer (1.5 = 50%)
-// B = medium      → normal buffer (1.3 = 30%)
-// C = low volume  → small buffer  (1.2 = 20%)
-const ABC_SAFETY = { A: 1.5, B: 1.3, C: 1.2 };
+// ABC Safety stock multipliers — editable via UI
+// Default: A=50%, B=30%, C=20%
+function getAbcSafety(){
+  const saved = localStorage.getItem('kp_abc_safety');
+  return saved ? JSON.parse(saved) : { A: 1.5, B: 1.3, C: 1.2 };
+}
+function saveAbcSafety(obj){
+  localStorage.setItem('kp_abc_safety', JSON.stringify(obj));
+  syncSettingToDB('kp_abc_safety', obj);
+}
 
 // In-memory ABC cache rebuilt from history each session
 let abcCache = {};
@@ -750,7 +781,8 @@ function getABCClass(code) {
 }
 
 function getSafetyMultiplier(code) {
-  return ABC_SAFETY[getABCClass(code)] || 1.2;
+  const safety = getAbcSafety();
+  return safety[getABCClass(code)] || 1.2;
 }
 
 const CC = {
@@ -893,6 +925,8 @@ async function loadAllFromDB(){
         } else if(key === 'kp_extra_products'){
           extraProducts = val;
           localStorage.setItem('kp_extra_products', JSON.stringify(val));
+        } else if(key === 'kp_abc_safety'){
+          localStorage.setItem('kp_abc_safety', JSON.stringify(val));
         }
       });
     }
@@ -1631,7 +1665,11 @@ function calcNeeds() {
     const safetyMult = getSafetyMultiplier(p.code);
     const abcClass = getABCClass(p.code);
     const needed = Math.max(0, Math.ceil(effectiveDemand * safetyMult) - st);
-    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, o };
+    // Average weekly sales from 1C history
+    const shArr = salesHistory[p.code] || [];
+    const nonZero = shArr.filter(v=>v>0);
+    const avgSales = nonZero.length ? Math.round(nonZero.reduce((s,v)=>s+v,0)/nonZero.length) : 0;
+    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, avgSales, o };
   }).filter(p => p.effectiveDemand > 0 || p.orderTotal > 0);
 }
 
@@ -1791,10 +1829,10 @@ function renderPlan(needs,activeDaysList){
   <div style="overflow-x:auto"><table class="ptable"><thead><tr>
     <th style="min-width:190px">Продукт</th><th class="c">Кат.</th>
     <th class="c" style="color:#4f8ef7">Заявки</th>
+    <th class="c" style="color:#2dd98f">Продажи (ср/нед)</th>
     <th class="c" style="color:#a78bfa">Прогноз</th>
-    <th class="c" style="color:var(--orange)">Эфф.спрос</th>
     <th class="c">ABC</th>
-    <th class="c" title="Страховой запас: A=50%, B=30%, C=20%">Запас%</th>
+    <th class="c" title="Страховой запас по ABC классу">Запас%</th>
     <th class="c">Склад</th><th class="c">К пр-ву</th>
     ${activeDaysList.map(d=>`<th class="c" style="color:${d.color}">${d.name}<br><span style="font-size:8px;color:var(--text3)">${d.meat.split(',')[0]}</span></th>`).join('')}
   </tr></thead><tbody>`;
@@ -2714,20 +2752,20 @@ function handleSalesFile(file){
 
       if(is1C){
         slog('✅ Формат: 1С (отчёт по продажам по дням)','ok');
-        parse1CSales(rows);
+        parse1CSales(rows, file.name);
       } else if(isIIKO){
         slog('✅ Формат: IIKO (оборотно-сальдовая)','ok');
-        parseIIKOSales(rows);
+        parseIIKOSales(rows, file.name);
       } else {
         slog('⚠️ Формат не определён, пробую как 1С...','w');
-        parse1CSales(rows);
+        parse1CSales(rows, file.name);
       }
     }catch(err){slog('❌ '+err.message,'e');console.error(err);}
   };
   reader.readAsArrayBuffer(file);
 }
 
-function parse1CSales(rows){
+function parse1CSales(rows, filename){
   // Scan first 15 rows to find date row and qty row
   // Date row: has cells matching DD.MM.YYYY or contains 'г.'
   // Qty row: the row after date row with 'Количество'/'Выручка'
@@ -2866,11 +2904,11 @@ function parse1CSales(rows){
   // Show preview table
   showSalesPreview(finalData, dateCols, byCodeByDay);
 
-  pendingSalesImport={data:finalData, byDay:byCodeByDay, dateCols, file:file.name, ts:ts(), format:'1c'};
+  pendingSalesImport={data:finalData, byDay:byCodeByDay, dateCols, file:filename||'1c_file.xlsx', ts:ts(), format:'1c'};
   document.getElementById('applySalesBtn').style.display='flex';
 }
 
-function parseIIKOSales(rows){
+function parseIIKOSales(rows, filename){
   // Legacy IIKO format handler
   let headerRow=-1;
   for(let i=0;i<Math.min(rows.length,15);i++){
@@ -2900,7 +2938,7 @@ function parseIIKOSales(rows){
     if(qty>0){parsed[code]=qty; if(allProducts().find(p=>p.code===code))matched++;}
   }
   slog('✅ IIKO: '+Object.keys(parsed).length+' позиций, совпало: '+matched,'ok');
-  pendingSalesImport={data:parsed,file:file.name,ts:ts(),format:'iiko'};
+  pendingSalesImport={data:parsed,file:filename||'iiko_file.xlsx',ts:ts(),format:'iiko'};
   document.getElementById('applySalesBtn').style.display='flex';
 }
 
@@ -3012,6 +3050,7 @@ function showModal(id){
   document.getElementById(id).style.display='flex';
   if(id==='setupModal'){document.getElementById('sbUrl').value=sbUrl;document.getElementById('sbKey').value=sbKey;}
   if(id==='meatModal'){editingSched=null;renderMeatSchedGrid();setTimeout(checkUnassignedCats,50);}
+  if(id==='safetyModal'){renderSafetyInputs();}
   if(id==='salesModal'){
     updateSalesHistCount();
     document.getElementById('slog').style.display='none';
@@ -3136,6 +3175,7 @@ function saveMeatSched(){
 }
 
 function openMeatModal(){ showModal("meatModal"); }
+function showSafetyModal(){ renderSafetyInputs(); showModal("safetyModal"); }
 function hardResetSchedule(){
   localStorage.removeItem('kp_meat_schedule');
   editingSched = null;
@@ -3204,6 +3244,57 @@ function checkUnassignedCats(){
   } else {
     warn.style.display = 'none';
   }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  SAFETY STOCK SETTINGS
+// ═══════════════════════════════════════════════════════
+function renderSafetyInputs(){
+  const safety = getAbcSafety();
+  const abcLabels = {
+    A: { label:'A — Высокий приоритет', color:'var(--green)', desc:'Топ 80% объёма продаж' },
+    B: { label:'B — Средний приоритет', color:'var(--accent)', desc:'Следующие 15% объёма' },
+    C: { label:'C — Низкий приоритет',  color:'var(--red)',   desc:'Оставшиеся 5% объёма' },
+  };
+  document.getElementById('safetyInputs').innerHTML = ['A','B','C'].map(cls => {
+    const pct = Math.round((safety[cls]-1)*100);
+    const info = abcLabels[cls];
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)">
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:700;color:${info.color}">${info.label}</div>
+        <div style="font-size:10px;color:var(--text3)">${info.desc}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="range" min="0" max="100" value="${pct}" step="5"
+          style="width:100px;accent-color:${info.color}"
+          oninput="this.nextElementSibling.textContent=this.value+'%';document.getElementById('sv-${cls}').value=this.value">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${info.color};min-width:38px">${pct}%</span>
+        <input type="number" id="sv-${cls}" min="0" max="200" value="${pct}"
+          style="width:54px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 6px;color:${info.color};font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center;outline:none"
+          oninput="this.previousElementSibling.previousElementSibling.value=this.value;this.previousElementSibling.textContent=this.value+'%'">
+        <span style="font-size:11px;color:var(--text3)">%</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function saveSafetySettings(){
+  const newSafety = {};
+  ['A','B','C'].forEach(cls => {
+    const val = Number(document.getElementById('sv-'+cls)?.value) || 0;
+    newSafety[cls] = 1 + val/100;
+  });
+  saveAbcSafety(newSafety);
+  closeModal('safetyModal');
+  toast('✅ Запас сохранён: A='+Math.round((newSafety.A-1)*100)+'% B='+Math.round((newSafety.B-1)*100)+'% C='+Math.round((newSafety.C-1)*100)+'%');
+  renderDash();
+}
+
+function resetSafetySettings(){
+  saveAbcSafety({ A:1.5, B:1.3, C:1.2 });
+  renderSafetyInputs();
+  toast('Сброшено: A=50% B=30% C=20%','warn');
 }
 
 // ═══════════════════════════════════════════════════════

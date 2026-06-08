@@ -1905,19 +1905,17 @@ function buildPlan(needs, activeDaysList){
     const isEmergency = p.st === 0 || (stockDays < daysUntilNormal && daysUntilNormal > 0);
 
     if(isEmergency && activeDaysList.length > 0){
-      // Place in FIRST active day (produce ASAP regardless of meat schedule)
       const firstDay = activeDaysList[0].key;
-      // Avoid duplicating if first day IS already a preferred day
       if(pref.includes(firstDay)){
+        // First day IS the preferred day — just add normally, no emergency flag needed
         pref.forEach(dk => plan[dk].push(p));
       } else {
-        // Add to first day as emergency + normal preferred days
-        plan[firstDay].push({...p, emergency: true});
-        pref.forEach(dk => plan[dk].push(p));
+        // Add ONLY to first day as emergency — skip normal preferred days to avoid duplicate
+        plan[firstDay].push({...p, emergency: true, normalDay: pref[0]});
         emergencyItems.push({name: p.name, cat: p.cat, stock: p.st, stockDays, normalDay: pref[0]});
       }
     } else {
-      // Normal: place in all preferred days
+      // Normal: place in preferred days only
       pref.forEach(dk => plan[dk].push(p));
     }
   }

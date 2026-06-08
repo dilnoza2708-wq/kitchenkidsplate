@@ -366,6 +366,7 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
     <div id="tab-plan" class="tab-content">
       <div class="toolbar">
         <span style="font-size:11px;color:var(--text2)">Сводный план производства</span>
+        <button class="btn-out" onclick="showSafetyModal()" style="color:var(--orange);border-color:rgba(247,147,79,.3)">⚙️ Страховой запас %</button>
         <div style="display:flex;gap:6px;margin-left:auto">
           <button class="btn-out" onclick="exportPlanCSV()">⬇ CSV</button>
           <button class="btn-out" style="color:#1d6f42;border-color:rgba(29,111,66,.4)" onclick="exportPlanXLSX()">⬇ Excel</button>
@@ -443,25 +444,23 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
 </div>
 
 
-<!-- MODAL: ABC Safety Settings -->
+<!-- MODAL: Safety Settings by Category -->
 <div id="safetyModal" class="moverlay" style="display:none" onclick="co(event,'safetyModal')">
-  <div class="modal" style="width:420px">
-    <h3>⚙️ Страховой запас по ABC классам</h3>
-    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
-      Страховой запас добавляется к прогнозу при расчёте «К производству».<br>
+  <div class="modal" style="width:480px;max-height:90vh;overflow-y:auto">
+    <h3>⚙️ Страховой запас % по категориям</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:12px;line-height:1.6">
+      Настройте страховой запас для каждой категории сырья.<br>
       <strong>Формула:</strong> К пр-ву = Прогноз × (1 + запас%) − Остаток склада
     </p>
-    <div style="display:flex;flex-direction:column;gap:10px" id="safetyInputs">
-      <!-- rendered by renderSafetyInputs() -->
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <button class="btn-out" onclick="setSafetyAll(50)" style="font-size:10px;padding:4px 9px">Всем 50%</button>
+      <button class="btn-out" onclick="setSafetyAll(30)" style="font-size:10px;padding:4px 9px">Всем 30%</button>
+      <button class="btn-out" onclick="setSafetyAll(20)" style="font-size:10px;padding:4px 9px">Всем 20%</button>
+      <button class="btn-out" onclick="resetSafetySettings()" style="font-size:10px;padding:4px 9px;color:var(--text3)">↩ По умолчанию</button>
     </div>
-    <div style="margin-top:14px;padding:10px;background:var(--bg3);border-radius:7px;font-size:10px;color:var(--text3)">
-      💡 <strong>A</strong> — топ 80% продаж (самые важные) &nbsp;·&nbsp;
-      <strong>B</strong> — следующие 15% &nbsp;·&nbsp;
-      <strong>C</strong> — редкие позиции
-    </div>
+    <div style="display:flex;flex-direction:column;gap:7px" id="safetyInputs"></div>
     <div class="mbrow" style="margin-top:14px">
       <button class="btn-prim" onclick="saveSafetySettings()" style="flex:1"><span class="btxt">💾 Сохранить</span></button>
-      <button class="btn-out" onclick="resetSafetySettings()">↩ По умолчанию</button>
       <button class="btn-out" onclick="closeModal('safetyModal')">Закрыть</button>
     </div>
   </div>
@@ -537,9 +536,20 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
 <div id="skuModal" class="moverlay" style="display:none" onclick="co(event,'skuModal')">
   <div class="modal" style="width:520px;max-height:90vh;overflow-y:auto">
     <h3>📦 Управление товарами (SKU)</h3>
-    <p style="font-size:10px;color:var(--text2);margin-bottom:14px;line-height:1.6">
-      Здесь можно добавить товары которых нет в базовом списке, или удалить ненужные пользовательские SKU.
+    <p style="font-size:10px;color:var(--text2);margin-bottom:10px;line-height:1.6">
+      Управляйте товарами: добавляйте новые SKU, ставьте на стоп временно неактивные позиции.
     </p>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:700;color:var(--text2);margin-bottom:8px">🛑 Поставить стандартный товар на стоп:</div>
+      <select id="stopProductSel" class="fsel" style="font-size:11px;margin-bottom:6px">
+        <option value="">— выберите товар —</option>
+        ${allProducts().map(p=>`<option value="${p.code}" ${stopList.has(p.code)?'style="color:var(--orange)"':''}>
+          ${stopList.has(p.code)?'🛑 ':''}${p.name} (${p.cat})</option>`).join('')}
+      </select>
+      <button onclick="toggleStopSelected()" class="btn-out" style="font-size:10px;padding:5px 10px;width:100%;justify-content:center">
+        🛑 Поставить / снять с остановки
+      </button>
+    </div>
 
     <!-- Add new SKU form -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
@@ -576,6 +586,12 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
     </div>
     <div id="extraList" style="max-height:260px;overflow-y:auto"></div>
 
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:8px">
+        🛑 На стопе (<span id="stopCount">0</span>) — временно не производится
+      </div>
+      <div id="stopListArea"></div>
+    </div>
     <div class="mbrow" style="margin-top:14px">
       <button class="btn-out" onclick="closeModal('skuModal');if(currentUser)renderInputTable();" style="flex:1">✅ Готово</button>
     </div>
@@ -809,6 +825,8 @@ let pendingImport = null;
 let planMode = localStorage.getItem('kp_plan_mode') || 'combined';
 // Custom products added by users (in addition to hardcoded PRODUCTS)
 let extraProducts = JSON.parse(localStorage.getItem('kp_extra_products') || '[]');
+// Stop list: codes of SKUs temporarily paused (won't appear in plan)
+let stopList = new Set(JSON.parse(localStorage.getItem('kp_stop_list') || '[]'));
 // Sales history: { productCode: [weeklyQty, ...] } — loaded from IIKO sales file or history
 let salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
 let pendingSalesImport = null;
@@ -925,8 +943,13 @@ async function loadAllFromDB(){
         } else if(key === 'kp_extra_products'){
           extraProducts = val;
           localStorage.setItem('kp_extra_products', JSON.stringify(val));
+        } else if(key === 'kp_stop_list'){
+          stopList = new Set(val||[]);
+          localStorage.setItem('kp_stop_list', JSON.stringify([...stopList]));
         } else if(key === 'kp_abc_safety'){
           localStorage.setItem('kp_abc_safety', JSON.stringify(val));
+        } else if(key === 'kp_cat_safety'){
+          localStorage.setItem('kp_cat_safety', JSON.stringify(val));
         }
       });
     }
@@ -1340,6 +1363,121 @@ function showSaveSt(msg,type){
 // ═══════════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+//  MISSED SALES ANALYSIS (Category A, by-day pattern)
+// ═══════════════════════════════════════════════════════
+function buildMissedSalesSection(){
+  // Only works if we have per-day sales data (from 1C import)
+  if(!pendingSalesImport?.byDay && !window._lastByDay){
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">📉 Анализ упущенных продаж (категория A)</div>
+      <div style="font-size:11px;color:var(--text3)">Загрузите файл продаж из 1С для анализа по дням.</div>
+    </div>`;
+  }
+  const byDay = window._lastByDay || {};
+  buildABCCache();
+  const missed = [];
+
+  Object.entries(byDay).forEach(([code, dayData])=>{
+    // Only category A
+    if(getABCClass(code) !== 'A') return;
+    const prod = allProducts().find(p=>p.code===code);
+    if(!prod) return;
+
+    const dates = Object.keys(dayData).sort();
+    if(dates.length < 3) return;
+    const qtys = dates.map(d=>dayData[d]||0);
+    const nonZero = qtys.filter(v=>v>0);
+    if(nonZero.length < 2) return;
+
+    // Find streaks: days where sales were 0 after being positive
+    const avg = nonZero.reduce((s,v)=>s+v,0)/nonZero.length;
+    let maxStreak = 0, currentStreak = 0, stockoutDays = 0;
+    let hadSales = false;
+    qtys.forEach(v=>{
+      if(v>0){ hadSales=true; currentStreak=0; }
+      else if(hadSales){ currentStreak++; stockoutDays++; if(currentStreak>maxStreak)maxStreak=currentStreak; }
+    });
+
+    if(stockoutDays < 1 || !hadSales) return;
+
+    // Estimate missed revenue
+    const missedQty = Math.round(stockoutDays * avg * 0.8); // conservative 80%
+    const pct = Math.round(stockoutDays/qtys.length*100);
+
+    missed.push({
+      code, name:prod.name, cat:prod.cat,
+      avg:Math.round(avg), stockoutDays, maxStreak,
+      missedQty, pct, totalDays:qtys.length,
+      actualSales:qtys.reduce((s,v)=>s+v,0)
+    });
+  });
+
+  if(!missed.length){
+    return `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:4px">✅ Упущенных продаж не обнаружено</div>
+      <div style="font-size:10px;color:var(--text3)">Все товары категории A продавались стабильно без перебоев.</div>
+    </div>`;
+  }
+
+  // Sort by missed qty descending
+  missed.sort((a,b)=>b.missedQty-a.missedQty);
+
+  const rows = missed.slice(0,10).map(m=>{
+    const catColor = CC[m.cat]||'#8a93b0';
+    const urgency = m.pct>40?'var(--red)':m.pct>20?'var(--orange)':'var(--yellow)';
+    return `<tr>
+      <td style="padding:6px 8px">
+        <div style="font-size:11px;font-weight:600;color:var(--text)">${m.name.substring(0,35)}</div>
+        <div style="font-size:9px;color:${catColor}">${m.cat} · ABC: A</div>
+      </td>
+      <td style="text-align:center;padding:6px 8px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2)">${m.avg}</span>
+        <div style="font-size:9px;color:var(--text3)">шт/день</div>
+      </td>
+      <td style="text-align:center;padding:6px 8px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:${urgency};font-weight:700">${m.stockoutDays}</span>
+        <div style="font-size:9px;color:var(--text3)">из ${m.totalDays} дней</div>
+      </td>
+      <td style="text-align:center;padding:6px 8px">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:${urgency};font-weight:800">${m.missedQty}</span>
+        <div style="font-size:9px;color:var(--text3)">шт (оценка)</div>
+      </td>
+      <td style="padding:6px 8px;font-size:10px;color:var(--text2)">
+        Ср. продажи ${m.avg} шт/день × ${m.stockoutDays} дней простоя.<br>
+        <span style="color:${urgency}">Увеличьте плановый запас минимум на ${Math.round(m.avg*3)} шт.</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const totalMissed = missed.reduce((s,m)=>s+m.missedQty,0);
+
+  return `<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid var(--red);border-radius:10px;padding:14px;margin-top:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:12px;font-weight:800;color:var(--text)">📉 Упущенные продажи — категория A</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">Товары с высоким спросом где продажи прерывались (скорее всего закончился товар)</div>
+      </div>
+      <div style="background:rgba(240,82,82,.1);border:1px solid rgba(240,82,82,.3);border-radius:7px;padding:6px 12px;text-align:center">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:800;color:var(--red)">${totalMissed}</div>
+        <div style="font-size:9px;color:var(--text3)">всего упущено шт</div>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:5px 8px;font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--text3)">Продукт</th>
+        <th style="text-align:center;padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--text3)">Ср/день</th>
+        <th style="text-align:center;padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--text3)">Дней без продаж</th>
+        <th style="text-align:center;padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--text3)">Упущено (оценка)</th>
+        <th style="text-align:left;padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--text3)">Рекомендация</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+
 function renderDash(){
   const area=document.getElementById('dashArea');
   const needs=calcNeeds();
@@ -1397,6 +1535,8 @@ function renderDash(){
         <td style="text-align:center"><span class="bdg b-gr">${p.needed}</span></td></tr>`).join('')}
       </tbody></table></div></div>`;
 
+  // Add missed sales section
+  html += buildMissedSalesSection();
   area.innerHTML=html;
 
   // Charts
@@ -1670,7 +1810,7 @@ function calcNeeds() {
     const nonZero = shArr.filter(v=>v>0);
     const avgSales = nonZero.length ? Math.round(nonZero.reduce((s,v)=>s+v,0)/nonZero.length) : 0;
     return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, avgSales, o };
-  }).filter(p => p.effectiveDemand > 0 || p.orderTotal > 0);
+  }).filter(p => (p.effectiveDemand > 0 || p.orderTotal > 0) && !stopList.has(p.code));
 }
 
 async function genPlan(){
@@ -1820,11 +1960,29 @@ function renderPlan(needs,activeDaysList){
       +hint2+'</div></div>';
     return;
   }
-  const groups=[...new Set(needs.map(p=>p.group))];
   const modeLabel={orders:'По заявкам',forecast:'По прогнозу',combined:'Заявки + прогноз'}[planMode];
-  let h=`<div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <span style="font-size:11px;font-weight:700;color:var(--text2)">Режим: <span style="color:var(--accent)">${modeLabel}</span></span>
-    <span style="font-size:10px;color:var(--text3)">Синий = заявки &nbsp;·&nbsp; Фиолетовый = прогноз &nbsp;·&nbsp; Оранжевый = эфф.спрос</span>
+  // Get current sort mode
+  const sortMode = window._planSortMode || 'group';
+  let sortedNeeds = [...needs];
+  let groups;
+  if(sortMode === 'cat'){
+    sortedNeeds.sort((a,b)=>a.cat.localeCompare(b.cat,'ru')||(b.needed-a.needed));
+    groups = [...new Set(sortedNeeds.map(p=>p.cat))];
+  } else if(sortMode === 'qty'){
+    sortedNeeds.sort((a,b)=>b.needed-a.needed);
+    groups = ['По убыванию (к производству)'];
+  } else {
+    sortedNeeds.sort((a,b)=>a.group.localeCompare(b.group,'ru'));
+    groups = [...new Set(sortedNeeds.map(p=>p.group))];
+  }
+  const sortBtn = (key,label) => `<button onclick="window._planSortMode='${key}';renderPlan(calcNeeds(),DAYS.filter(d=>activeDays[d.key]))"
+    style="padding:4px 9px;border-radius:5px;font-size:10px;font-family:Manrope,sans-serif;cursor:pointer;border:1px solid ${sortMode===key?'var(--accent)':'var(--border)'};background:${sortMode===key?'rgba(79,142,247,.12)':'var(--bg3)'};color:${sortMode===key?'var(--accent)':'var(--text2)'}">${label}</button>`;
+  let h=`<div style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:10px;color:var(--text3)">Сортировка:</span>
+    ${sortBtn('group','По группам')}
+    ${sortBtn('cat','По категориям')}
+    ${sortBtn('qty','По объёму ↓')}
+    <span style="margin-left:8px;font-size:11px;font-weight:700;color:var(--text2)">Режим: <span style="color:var(--accent)">${modeLabel}</span></span>
   </div>
   <div style="overflow-x:auto"><table class="ptable"><thead><tr>
     <th style="min-width:190px">Продукт</th><th class="c">Кат.</th>
@@ -1838,12 +1996,19 @@ function renderPlan(needs,activeDaysList){
   </tr></thead><tbody>`;
   for(const g of groups){
     h+=`<tr class="crow"><td colspan="${7+activeDaysList.length}">${g}</td></tr>`;
-    for(const p of needs.filter(x=>x.group===g)){
+    const groupKey = sortMode==='cat' ? 'cat' : sortMode==='qty' ? null : 'group';
+    const groupItems = groupKey ? sortedNeeds.filter(x=>x[groupKey]===g) : sortedNeeds;
+    for(const p of groupItems){
       const c=CC[p.cat]||'#8a93b0';
       const srcIcon=p.demandSource==='forecast'?'🔮':p.demandSource==='orders'?'📋':'⚖️';
       const extraTag=p.extraOrder>0?`<span style="font-size:9px;color:var(--orange);margin-left:3px" title="Доп.заказ сверх прогноза">+${p.extraOrder}</span>`:'';
       h+=`<tr><td>
-          <div class="pn">${p.name}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div class="pn">${p.name}</div>
+            <button onclick="toggleStop('${p.code}');genPlan()" title="Поставить на стоп — убрать из плана"
+              style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text3);padding:0 2px"
+              onmouseover="this.style.color='var(--orange)'" onmouseout="this.style.color='var(--text3)'">🛑</button>
+          </div>
           <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
             <span class="pc" style="color:${c}">${p.cat}</span>
             <span title="Источник спроса" style="font-size:10px">${srcIcon}</span>
@@ -2991,6 +3156,9 @@ function applySalesImport(){
   // Sync full salesHistory object to Supabase settings table
   syncSettingToDB('kp_sales_hist', salesHistory);
 
+  // Save per-day data for missed sales analysis
+  if(pendingSalesImport.byDay) window._lastByDay = pendingSalesImport.byDay;
+
   const count = Object.values(data).filter(v=>v>0).length;
   saveHistEntry({ts:ts(),user:currentUser||'Система',week:currentWeek,
     changes:['История продаж из 1С: '+pendingSalesImport.file+' ('+count+' позиций)']});
@@ -3248,60 +3416,146 @@ function checkUnassignedCats(){
 
 
 // ═══════════════════════════════════════════════════════
-//  SAFETY STOCK SETTINGS
+//  SAFETY STOCK SETTINGS — by category
 // ═══════════════════════════════════════════════════════
+
+// Default safety by category (20% for all)
+const DEFAULT_CAT_SAFETY = {
+  'Индейка':50,'Курица':50,'Лосось':50,
+  'Кролик':30,'Телятина':30,'Овощи':20,
+  'Творог':20,'Брынза':20,'Другое':20,
+};
+
+function getCatSafety(){
+  const saved = localStorage.getItem('kp_cat_safety');
+  return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_CAT_SAFETY));
+}
+
+function saveCatSafety(obj){
+  localStorage.setItem('kp_cat_safety', JSON.stringify(obj));
+  syncSettingToDB('kp_cat_safety', obj);
+}
+
+// Override getSafetyMultiplier to use category-based settings
+function getSafetyMultiplier(code){
+  const p = allProducts().find(x=>x.code===code);
+  if(!p) return 1.2;
+  const catSafety = getCatSafety();
+  // Use category safety if set, otherwise fall back to ABC
+  if(catSafety[p.cat] !== undefined){
+    return 1 + catSafety[p.cat]/100;
+  }
+  const abcSafety = getAbcSafety();
+  return abcSafety[getABCClass(code)] || 1.2;
+}
+
 function renderSafetyInputs(){
-  const safety = getAbcSafety();
-  const abcLabels = {
-    A: { label:'A — Высокий приоритет', color:'var(--green)', desc:'Топ 80% объёма продаж' },
-    B: { label:'B — Средний приоритет', color:'var(--accent)', desc:'Следующие 15% объёма' },
-    C: { label:'C — Низкий приоритет',  color:'var(--red)',   desc:'Оставшиеся 5% объёма' },
-  };
-  document.getElementById('safetyInputs').innerHTML = ['A','B','C'].map(cls => {
-    const pct = Math.round((safety[cls]-1)*100);
-    const info = abcLabels[cls];
-    return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)">
-      <div style="flex:1">
-        <div style="font-size:12px;font-weight:700;color:${info.color}">${info.label}</div>
-        <div style="font-size:10px;color:var(--text3)">${info.desc}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <input type="range" min="0" max="100" value="${pct}" step="5"
-          style="width:100px;accent-color:${info.color}"
-          oninput="this.nextElementSibling.textContent=this.value+'%';document.getElementById('sv-${cls}').value=this.value">
-        <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:${info.color};min-width:38px">${pct}%</span>
-        <input type="number" id="sv-${cls}" min="0" max="200" value="${pct}"
-          style="width:54px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:4px 6px;color:${info.color};font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center;outline:none"
-          oninput="this.previousElementSibling.previousElementSibling.value=this.value;this.previousElementSibling.textContent=this.value+'%'">
-        <span style="font-size:11px;color:var(--text3)">%</span>
-      </div>
+  const catSafety = getCatSafety();
+  const cats = [...new Set([...Object.keys(DEFAULT_CAT_SAFETY), ...getAllCats()])];
+  document.getElementById('safetyInputs').innerHTML = cats.map(cat => {
+    const pct = catSafety[cat] !== undefined ? catSafety[cat] : 20;
+    const color = CC[cat] || '#8a93b0';
+    const safeId = 'sv-'+cat.replace(/[^a-zа-яёА-ЯЁ]/gi,'_');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)">
+      <span class="mpill" style="background:${color}22;color:${color};min-width:80px;justify-content:center">${cat}</span>
+      <input type="range" min="0" max="100" value="${pct}" step="5"
+        style="flex:1;accent-color:${color}"
+        oninput="document.getElementById('${safeId}').value=this.value;this.nextElementSibling.textContent=this.value+'%'">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${color};min-width:36px">${pct}%</span>
+      <input type="number" id="${safeId}" min="0" max="200" value="${pct}" data-cat="${cat}"
+        style="width:52px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 5px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;outline:none"
+        oninput="this.previousElementSibling.previousElementSibling.value=this.value;this.previousElementSibling.textContent=this.value+'%'">
+      <span style="font-size:10px;color:var(--text3)">%</span>
     </div>`;
   }).join('');
 }
 
 function saveSafetySettings(){
   const newSafety = {};
-  ['A','B','C'].forEach(cls => {
-    const val = Number(document.getElementById('sv-'+cls)?.value) || 0;
-    newSafety[cls] = 1 + val/100;
+  document.querySelectorAll('#safetyInputs input[data-cat]').forEach(inp=>{
+    newSafety[inp.dataset.cat] = Number(inp.value)||0;
   });
-  saveAbcSafety(newSafety);
+  saveCatSafety(newSafety);
   closeModal('safetyModal');
-  toast('✅ Запас сохранён: A='+Math.round((newSafety.A-1)*100)+'% B='+Math.round((newSafety.B-1)*100)+'% C='+Math.round((newSafety.C-1)*100)+'%');
+  toast('✅ Страховой запас сохранён по категориям');
+  if(planResult){
+    const needs=calcNeeds();
+    const activeDaysList=DAYS.filter(d=>activeDays[d.key]);
+    renderPlan(needs,activeDaysList);
+  }
   renderDash();
 }
 
+function setSafetyAll(pct){
+  document.querySelectorAll('#safetyInputs input[data-cat]').forEach(inp=>{
+    inp.value=pct;
+    const rangeEl=inp.previousElementSibling.previousElementSibling;
+    const labelEl=inp.previousElementSibling;
+    if(rangeEl) rangeEl.value=pct;
+    if(labelEl) labelEl.textContent=pct+'%';
+  });
+}
+
 function resetSafetySettings(){
-  saveAbcSafety({ A:1.5, B:1.3, C:1.2 });
+  saveCatSafety(JSON.parse(JSON.stringify(DEFAULT_CAT_SAFETY)));
   renderSafetyInputs();
-  toast('Сброшено: A=50% B=30% C=20%','warn');
+  toast('Сброшено на значения по умолчанию','warn');
+}
+
+// ═══════════════════════════════════════════════════════
+//  STOP LIST
+// ═══════════════════════════════════════════════════════
+function toggleStop(code){
+  if(stopList.has(code)) stopList.delete(code);
+  else stopList.add(code);
+  const arr = [...stopList];
+  localStorage.setItem('kp_stop_list', JSON.stringify(arr));
+  syncSettingToDB('kp_stop_list', arr);
+  renderExtraList();
+  renderStopList();
+  toast(stopList.has(code) ? '🛑 Добавлен в стоп-лист' : '✅ Убран из стоп-листа');
+}
+
+function renderStopList(){
+  const el = document.getElementById('stopListArea');
+  if(!el) return;
+  const stopped = allProducts().filter(p => stopList.has(p.code));
+  if(!stopped.length){
+    el.innerHTML='<div style="font-size:11px;color:var(--text3);font-style:italic;padding:6px 0">Нет товаров на стопе</div>';
+    return;
+  }
+  el.innerHTML = stopped.map(p=>{
+    const c=CC[p.cat]||'#8a93b0';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(36,42,62,.4)">
+      <span class="mpill" style="background:${c}22;color:${c};font-size:9px">${p.cat}</span>
+      <span style="flex:1;font-size:11px;color:var(--text)">${p.name}</span>
+      <button onclick="toggleStop('${p.code}')" style="background:rgba(45,217,143,.1);border:1px solid rgba(45,217,143,.3);color:var(--green);border-radius:5px;padding:2px 8px;font-size:10px;cursor:pointer">▶ Возобновить</button>
+    </div>`;
+  }).join('');
 }
 
 // ═══════════════════════════════════════════════════════
 //  SKU MANAGER
 // ═══════════════════════════════════════════════════════
+function toggleStopSelected(){
+  const code = document.getElementById('stopProductSel')?.value;
+  if(!code){ toast('Выберите товар','warn'); return; }
+  toggleStop(code);
+  // Refresh select
+  const sel = document.getElementById('stopProductSel');
+  if(sel){
+    const opt = sel.querySelector(`option[value="${code}"]`);
+    if(opt){ opt.textContent = (stopList.has(code)?'🛑 ':'')+opt.textContent.replace('🛑 ',''); }
+  }
+  const cnt = document.getElementById('stopCount');
+  if(cnt) cnt.textContent = stopList.size;
+}
+
 function showSKUModal(){
   renderExtraList();
+  renderStopList();
+  const cnt = document.getElementById('stopCount');
+  if(cnt) cnt.textContent = stopList.size;
   showModal('skuModal');
 }
 
@@ -3362,6 +3616,7 @@ function renderExtraList(){
           ${bs>0?`<span style="font-size:9px;color:#a78bfa">ср.продажи: ${bs}/нед</span>`:''}
         </div>
       </div>
+      <button onclick="toggleStop('${p.code}')" style="background:${stopList.has(p.code)?'rgba(247,147,79,.15)':'var(--bg3)'};border:1px solid ${stopList.has(p.code)?'rgba(247,147,79,.4)':'var(--border)'};color:${stopList.has(p.code)?'var(--orange)':'var(--text3)'};border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer" title="${stopList.has(p.code)?'Возобновить производство':'Поставить на стоп'}">${stopList.has(p.code)?'🛑 СТОП':'⏸ Стоп'}</button>
       <button onclick="deleteSKU('${p.code}')" style="background:rgba(240,82,82,.1);border:1px solid rgba(240,82,82,.3);color:var(--red);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer">✕</button>
     </div>`;
   }).join('');

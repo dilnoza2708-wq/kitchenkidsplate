@@ -189,6 +189,57 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 .finp:focus,.fsel:focus{border-color:var(--accent)}
 .mbrow{display:flex;gap:7px;margin-top:14px}
 
+/* ── LIGHT THEME ── */
+body.light{
+  --bg:#f5f6fa;--bg2:#ffffff;--bg3:#f0f1f6;--card:#ffffff;--border:#dde1ee;
+  --accent:#2563eb;--accent2:#7c3aed;--green:#16a34a;--orange:#ea7a1a;
+  --red:#dc2626;--yellow:#ca8a04;--text:#1a1f35;--text2:#4a5270;--text3:#8a93b0;
+  --shadow:0 4px 24px rgba(0,0,0,.1);
+}
+body.light header{background:#fff;border-bottom:1px solid #dde1ee}
+body.light .sidebar{background:#fff;border-right:1px solid #dde1ee}
+body.light .sb-sec{border-bottom:1px solid #eef0f7}
+body.light .tab-bar{background:#fff;border-bottom:1px solid #dde1ee}
+body.light .tab.on{background:#f5f6fa;border-color:#dde1ee;border-bottom-color:#f5f6fa}
+body.light .toolbar{background:#fff;border-bottom:1px solid #dde1ee}
+body.light .dchip{background:#f0f1f6;border-color:#dde1ee}
+body.light .dchip.on{background:rgba(37,99,235,.08);border-color:#2563eb}
+body.light .ptable th{background:#f0f1f6;color:#4a5270}
+body.light .ptable td{border-bottom:1px solid #eef0f7}
+body.light .ptable tr:hover td{background:rgba(0,0,0,.02)}
+body.light .crow td{background:#eef0f7;color:#8a93b0}
+body.light .modal{background:#fff;border-color:#dde1ee}
+body.light .moverlay{background:rgba(0,0,0,.4)}
+body.light .finp,.light .fsel{background:#f5f6fa;border-color:#dde1ee;color:#1a1f35}
+body.light .qinp{background:#f5f6fa;border-color:#dde1ee;color:#1a1f35}
+body.light .btn-out{background:#f5f6fa;border-color:#dde1ee;color:#4a5270}
+body.light .iiko-btn{border-color:#dde1ee;color:#8a93b0}
+body.light .kpi{background:#fff;border-color:#dde1ee}
+body.light .chart-card{background:#fff;border-color:#dde1ee}
+body.light .dcard{background:#fff;border-color:#dde1ee}
+body.light .aipanel{background:#f5f6fa;border-top:1px solid #dde1ee}
+body.light .aibub{background:#fff;border-color:#dde1ee;color:#4a5270}
+body.light .matrix-wrap{background:#fff;border-color:#dde1ee}
+body.light .reco-item{background:#fff;border-color:#dde1ee}
+body.light .srow{border-bottom:1px solid #eef0f7}
+body.light .sn{color:#4a5270}
+body.light .sq{background:#f0f1f6}
+body.light .hitem{border-bottom:1px solid #eef0f7}
+body.light .online-user{color:#4a5270}
+body.light .bdg.b-dm{background:#eef0f7;color:#8a93b0}
+body.light .tab-content{background:#f5f6fa}
+body.light .parea{background:#f5f6fa}
+body.light .conn-badge{border-color:#dde1ee;color:#8a93b0}
+body.light .conn-badge.live{border-color:rgba(22,163,74,.4);color:#16a34a;background:rgba(22,163,74,.06)}
+body.light .setup-box{background:#f5f6fa;border-color:#dde1ee}
+body.light .ilog{background:#f5f6fa}
+body.light .dzone{border-color:#dde1ee}
+body.light .dzone:hover{border-color:#2563eb;background:rgba(37,99,235,.03)}
+body.light .logo-icon{background:linear-gradient(135deg,#2563eb,#7c3aed)}
+body.light .ai-panel{background:#f0f1f6}
+body.light .mode-btn{color:#8a93b0}
+body.light .mode-btn.active{background:#2563eb;color:#fff}
+
 /* ── PRINT / PDF ── */
 @media print {
   body { background: #fff !important; color: #111 !important; font-size: 11pt; }
@@ -239,6 +290,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 <header>
   <div class="logo"><div class="logo-icon">🍽️</div>КухняПлан</div>
   <div class="hright">
+    <button onclick="toggleTheme()" id="themeBtn" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:13px;color:var(--text2)" title="Сменить тему">🌙</button>
     <div class="conn-badge" id="connBadge"><div class="conn-dot"></div><span id="connText">не подключено</span></div>
     <div class="user-btn" onclick="showModal('userModal')"><div class="udot" id="udot"></div><span id="uname">Войти</span></div>
   </div>
@@ -275,7 +327,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       <button class="tab" onclick="showSKUModal()" id="tb-sku" style="color:var(--orange)">📦 SKU</button>
       <button class="tab" onclick="switchTab('abc')" id="tb-abc">📈 ABC/XYZ</button>
       <button class="tab" onclick="switchTab('history')" id="tb-history">🕒 История</button>
-      <button class="tab" onclick="showModal('setupModal')" id="tb-setup" style="margin-left:auto;color:var(--orange)">⚙️ Supabase</button>
+      <button class="tab" onclick="showModal('setupModal')" id="tb-setup" style="margin-left:auto;color:var(--text3);font-size:10px">⚙️</button>
     </div>
 
     <!-- DASHBOARD -->
@@ -514,8 +566,8 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       Артикул в колонке E, даты в строке 9, количество под каждой датой.<br>
       <span style="color:var(--accent)">Умная логика:</span> если товар продавался стабильно, а потом продажи прекратились — считаем что товар закончился (упущенные продажи восстанавливаются).
     </p>
-    <div style="background:rgba(247,147,79,.07);border:1px solid rgba(247,147,79,.2);border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:var(--orange)">
-      ⚠️ <strong>Не учитываются в прогнозе:</strong> продажи Сабины, Арины, Снабжения — они работают по заявкам, не по истории.
+    <div style="background:rgba(45,217,143,.07);border:1px solid rgba(45,217,143,.2);border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:var(--green)">
+      ✅ Все продажи из файла учитываются в прогнозе — по клиентам, менеджерам и каналам.
     </div>
     <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <div style="font-size:10px;color:var(--text3);padding:5px 9px;background:var(--bg3);border-radius:5px;border:1px solid var(--border)">
@@ -773,15 +825,16 @@ function saveHistEntry(e){
 // ═══════════════════════════════════════════════════════
 //  SUPABASE
 // ═══════════════════════════════════════════════════════
+// ── Supabase credentials (hardcoded — auto-connect for all staff) ──
+const SB_URL = 'https://wqpjftaffwgzohqpfijd.supabase.co';
+const SB_KEY = 'sb_publishable_DXKHdAhMHbuUqcgDyusK8g_a8knrYqv';
+
 function initSupabase(){
-  sbUrl=localStorage.getItem('sb_url')||'';
-  sbKey=localStorage.getItem('sb_key')||'';
-  if(sbUrl&&(sbUrl.includes('github.io')||sbUrl.includes('github.com'))){
-    localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key');
-    sbUrl=''; sbKey='';
-    toast('⚠️ Неверный Supabase URL удалён. Введите правильный в ⚙️ Supabase','warn');
-  }
-  if(!sbUrl||!sbKey){setConn(false,'не настроен');return;}
+  // Always use hardcoded credentials — no manual setup needed
+  sbUrl = SB_URL;
+  sbKey = SB_KEY;
+  localStorage.setItem('sb_url', sbUrl);
+  localStorage.setItem('sb_key', sbKey);
   try{
     sb = supabase.createClient(sbUrl,sbKey);
     setConn(true,'подключение…');
@@ -1025,10 +1078,26 @@ function renderOnline(){
 // ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
+function toggleTheme(){
+  const isLight = document.body.classList.toggle('light');
+  localStorage.setItem('kp_theme', isLight ? 'light' : 'dark');
+  document.getElementById('themeBtn').textContent = isLight ? '☀️' : '🌙';
+}
+
+function applyTheme(){
+  const theme = localStorage.getItem('kp_theme') || 'dark';
+  if(theme === 'light'){
+    document.body.classList.add('light');
+    const btn = document.getElementById('themeBtn');
+    if(btn) btn.textContent = '☀️';
+  }
+}
+
 function init(){
   // Always reload persisted data fresh on start
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
   buildABCCache();
+  applyTheme();
   document.getElementById('weekSel').value=currentWeek;
   loadOrdersLocal();
   // If no saved schedule — apply smart default based on actual products
@@ -2615,14 +2684,7 @@ function initModeButtons(){
 // ═══════════════════════════════════════════════════════
 function odrSales(e){e.preventDefault();document.getElementById('sdzone').classList.remove('drag');handleSalesFile(e.dataTransfer.files[0]);}
 
-// Managers/sources to EXCLUDE from forecast (they work by orders, not history)
-const EXCLUDE_FROM_FORECAST = ['сабина','арина','снабжение','sabina','arina'];
 
-function isExcludedManager(name){
-  if(!name) return false;
-  const n = String(name).toLowerCase().trim();
-  return EXCLUDE_FROM_FORECAST.some(e => n.includes(e));
-}
 
 function parseNum(val){
   return Math.abs(parseFloat(String(val||0).replace(',','.').replace(/[\s\u00a0]/g,''))||0);
@@ -2728,7 +2790,6 @@ function parse1CSales(rows){
   const byCodeByDay = {};
   // Track current product
   let currentCode = null;
-  let currentExcludedManager = false;
 
   for(let i=dataStart; i<rows.length-1; i++){
     const row = rows[i];
@@ -2738,7 +2799,6 @@ function parse1CSales(rows){
     // Товарная строка — есть артикул
     if(art && /^\d+$/.test(art)){
       currentCode = art;
-      currentExcludedManager = false;
       if(!byCodeByDay[art]) byCodeByDay[art]={};
       // Sum all day quantities on this line (product totals)
       dateCols.forEach(({date,col})=>{
@@ -2748,23 +2808,7 @@ function parse1CSales(rows){
       continue;
     }
 
-    // Менеджерская строка — нет артикула, name не пустой, не начинается с цифр
-    if(name && currentCode && !art){
-      // Check if this is a manager we want to exclude
-      if(isExcludedManager(name)){
-        currentExcludedManager = true;
-        // Subtract this manager's sales from the product totals
-        dateCols.forEach(({date,col})=>{
-          const qty = parseNum(row[col]);
-          if(qty>0 && byCodeByDay[currentCode]){
-            byCodeByDay[currentCode][date] = Math.max(0,(byCodeByDay[currentCode][date]||0)-qty);
-          }
-        });
-        slog('  ↳ Исключаем менеджера: '+name.substring(0,30),'w');
-      } else {
-        currentExcludedManager = false;
-      }
-    }
+    // Менеджерская/клиентская строка — пропускаем, продажи уже учтены в строке товара
   }
 
   // ── Smart missed sales logic ──

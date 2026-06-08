@@ -543,8 +543,6 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
       <div style="font-size:10px;font-weight:700;color:var(--text2);margin-bottom:8px">🛑 Поставить стандартный товар на стоп:</div>
       <select id="stopProductSel" class="fsel" style="font-size:11px;margin-bottom:6px">
         <option value="">— выберите товар —</option>
-        ${allProducts().map(p=>`<option value="${p.code}" ${stopList.has(p.code)?'style="color:var(--orange)"':''}>
-          ${stopList.has(p.code)?'🛑 ':''}${p.name} (${p.cat})</option>`).join('')}
       </select>
       <button onclick="toggleStopSelected()" class="btn-out" style="font-size:10px;padding:5px 10px;width:100%;justify-content:center">
         🛑 Поставить / снять с остановки
@@ -3541,12 +3539,8 @@ function toggleStopSelected(){
   const code = document.getElementById('stopProductSel')?.value;
   if(!code){ toast('Выберите товар','warn'); return; }
   toggleStop(code);
-  // Refresh select
-  const sel = document.getElementById('stopProductSel');
-  if(sel){
-    const opt = sel.querySelector(`option[value="${code}"]`);
-    if(opt){ opt.textContent = (stopList.has(code)?'🛑 ':'')+opt.textContent.replace('🛑 ',''); }
-  }
+  // Rebuild select fully
+  populateStopSelect();
   const cnt = document.getElementById('stopCount');
   if(cnt) cnt.textContent = stopList.size;
 }
@@ -3554,9 +3548,23 @@ function toggleStopSelected(){
 function showSKUModal(){
   renderExtraList();
   renderStopList();
+  populateStopSelect();
   const cnt = document.getElementById('stopCount');
   if(cnt) cnt.textContent = stopList.size;
   showModal('skuModal');
+}
+
+function populateStopSelect(){
+  const sel = document.getElementById('stopProductSel');
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— выберите товар —</option>'
+    + allProducts().map(p => {
+        const stopped = stopList.has(p.code);
+        const label = (stopped?'🛑 ':'') + p.name + ' (' + p.cat + ')';
+        const style = stopped ? 'color:var(--orange)' : '';
+        return `<option value="${p.code}" ${style?`style="${style}"`:''} ${p.code===cur?'selected':''}>${label}</option>`;
+      }).join('');
 }
 
 function addSKU(){

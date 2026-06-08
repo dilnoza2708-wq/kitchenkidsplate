@@ -2570,7 +2570,10 @@ function handleSalesFile(file){
       // ── Detect format ──
       // 1С format: row 9 has dates like "01.06.2026 г.", row 10 has "Количество"/"Выручка"
       // IIKO format: has "Код" in col A
-      const is1C = rows.slice(0,12).some(r => String(r[6]||'').includes('г.') || String(r[7]||'').includes('г.'));
+      // Detect 1C format: any row in first 15 has date pattern DD.MM.YYYY
+      const is1C = rows.slice(0,15).some(r =>
+        r.some(cell => /\d{2}\.\d{2}\.\d{4}/.test(String(cell||'')))
+      );
       const isIIKO = rows.slice(0,15).some(r => String(r[0]||'').trim()==='Код');
 
       if(is1C){
@@ -2589,28 +2592,62 @@ function handleSalesFile(file){
 }
 
 function parse1CSales(rows){
-  // Row 9 (index 8): dates in cols 6,8,10,12,14,16,18 (0-indexed)
-  // Row 10 (index 9): "Количество"/"Выручка" under each date
-  // Col 4 (index 4): Артикул
-  // Hierarchy: товар (has артикул) → менеджер → клиент → заказ
+  // Scan first 15 rows to find date row and qty row
+  // Date row: has cells matching DD.MM.YYYY or contains 'г.'
+  // Qty row: the row after date row with 'Количество'/'Выручка'
+  // Artcol: column with 'Артикул' header (usually col 4)
 
-  const dateRow = rows[8] || [];
-  const qtyRow  = rows[9] || [];
-
-  // Find date columns (cols with "г." in dateRow)
+  let dateRowIdx = -1;
+  let artCol = 4; // default col E (0-indexed)
   const dateCols = [];
-  dateRow.forEach((cell, ci) => {
-    if(String(cell).includes('г.')){
-      // Find qty col: same ci or ci+1 where "Количество"
-      let qtyCol = ci;
-      if(String(qtyRow[ci]).toLowerCase().includes('количество')) qtyCol = ci;
-      else if(String(qtyRow[ci+1]||'').toLowerCase().includes('количество')) qtyCol = ci+1;
-      dateCols.push({date: String(cell).replace(' г.','').trim(), col: qtyCol});
-    }
-  });
 
-  if(!dateCols.length){slog('❌ Не найдены колонки с датами (ожидается "01.06.2026 г." в строке 9)','e');return;}
-  slog('📅 Дат найдено: '+dateCols.length+' ('+dateCols[0].date+' … '+dateCols[dateCols.length-1].date+')','ok');
+  // Find date row — scan rows 0..14
+  for(let ri = 0; ri < Math.min(rows.length, 15); ri++){
+    const row = rows[ri];
+    // Check if this row has date-like values: "01.06.2026 г." or "01.06.2026"
+    const dateCells = row.map((cell,ci)=>({ci, val:String(cell||'')}))
+      .filter(({val}) => /\d{2}\.\d{2}\.\d{4}/.test(val));
+    if(dateCells.length >= 2){
+      dateRowIdx = ri;
+      slog('📅 Строка с датами: '+(ri+1)+' (найдено '+dateCells.length+' дат)','ok');
+      // Find artcol: look for 'артикул' in same row or nearby
+      for(let ci=0; ci<row.length; ci++){
+        if(String(row[ci]||'').toLowerCase().includes('артикул')){ artCol=ci; break; }
+      }
+      // Build dateCols from this row
+      const qtyRow = rows[ri+1] || [];
+      dateCells.forEach(({ci,val})=>{
+        // Find qty col: ci itself or ci+1 where 'Количество'
+        let qtyCol = ci;
+        if(String(qtyRow[ci]||'').toLowerCase().includes('количество')) qtyCol = ci;
+        else if(String(qtyRow[ci+1]||'').toLowerCase().includes('количество')) qtyCol = ci+1;
+        const dateStr = val.replace(' г.','').trim();
+        dateCols.push({date: dateStr, col: qtyCol});
+      });
+      break;
+    }
+  }
+
+  if(!dateCols.length){
+    // Last resort: try fixed positions (col 6,8,10... are qty cols)
+    slog('⚠️ Даты не найдены автоматически, пробую фиксированные позиции...','w');
+    // Scan all rows for date pattern
+    for(let ri=0; ri<rows.length; ri++){
+      for(let ci=0; ci<rows[ri].length; ci++){
+        const val = String(rows[ri][ci]||'');
+        if(/^\d{2}\.\d{2}\.\d{4}/.test(val)){
+          dateCols.push({date: val.replace(' г.','').trim(), col: ci});
+        }
+      }
+      if(dateCols.length >= 2){ dateRowIdx=ri; slog('📅 Даты найдены в строке '+(ri+1),'ok'); break; }
+    }
+  }
+
+  if(!dateCols.length){slog('❌ Не найдены колонки с датами. Проверьте формат файла.','e');return;}
+  slog('✅ Дат: '+dateCols.length+' | Артикул в кол. '+(artCol+1)+' | Даты: '+dateCols[0].date+' … '+dateCols[dateCols.length-1].date,'ok');
+
+  // Start parsing from row after date row + 3 header rows (qty/клиент/менеджер)
+  const dataStart = dateRowIdx + 3;
 
   // Parse product rows — by артикул in col 4
   // { code: { date: qty, ... } }
@@ -2619,10 +2656,10 @@ function parse1CSales(rows){
   let currentCode = null;
   let currentExcludedManager = false;
 
-  for(let i=13; i<rows.length-1; i++){
+  for(let i=dataStart; i<rows.length-1; i++){
     const row = rows[i];
     const name = String(row[0]||'').trim();
-    const art  = String(row[4]||'').trim();
+    const art  = String(row[artCol]||'').trim();
 
     // Товарная строка — есть артикул
     if(art && /^\d+$/.test(art)){

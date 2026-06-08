@@ -300,7 +300,7 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
         <button class="btn-prim mla" onclick="genPlan()" id="genBtn">
           <div class="spinner"></div><span class="btxt">✨ Сгенерировать план</span>
         </button>
-        <button class="btn-out" onclick="showModal('salesModal')">📈 Загрузить продажи</button>
+        <button class="btn-out" onclick="showModal('salesModal')" style="color:#a78bfa;border-color:rgba(167,139,250,.3)">📈 Загрузить продажи (1С)</button>
         <button class="btn-out" onclick="exportOrdersCSV()">⬇ CSV</button>
       </div>
       <div class="parea" id="inputArea">
@@ -381,6 +381,11 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
       <button class="btn-prim" onclick="saveMeatSched()" style="flex:1"><span class="btxt">💾 Сохранить расписание</span></button>
       <button class="btn-out" onclick="resetMeatSched()">↩ Сбросить</button>
       <button class="btn-out" onclick="closeModal('meatModal')">Закрыть</button>
+    </div>
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <button onclick="hardResetSchedule()" style="width:100%;padding:7px;background:rgba(240,82,82,.08);border:1px solid rgba(240,82,82,.3);border-radius:6px;color:var(--red);font-size:10px;font-family:Manrope,sans-serif;cursor:pointer">
+        🗑 Полный сброс расписания (удалить сохранённое и применить стандартное)
+      </button>
     </div>
   </div>
 </div>
@@ -502,28 +507,32 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 
 <!-- MODAL: Sales History Import -->
 <div id="salesModal" class="moverlay" style="display:none" onclick="co(event,'salesModal')">
-  <div class="modal" style="width:480px">
-    <h3>📈 Загрузка истории продаж из IIKO</h3>
-    <p style="font-size:10px;color:var(--text2);margin-bottom:12px;line-height:1.6">
-      Загрузите отчёт о продажах/расходах из IIKO (также формат оборотно-сальдовой ведомости или отчёта о продажах).<br>
-      Используется колонка <strong>«Расход → Кол-во»</strong> как фактические продажи периода.<br>
-      <span style="color:var(--orange)">Чем больше недель загружено — тем точнее прогноз.</span>
+  <div class="modal" style="width:500px;max-height:92vh;overflow-y:auto">
+    <h3>📈 Загрузка продаж из 1С</h3>
+    <p style="font-size:10px;color:var(--text2);margin-bottom:10px;line-height:1.6">
+      Формат: <strong>«Отчёт по продажам» из 1С по дням</strong> (файл как вы показали).<br>
+      Артикул в колонке E, даты в строке 9, количество под каждой датой.<br>
+      <span style="color:var(--accent)">Умная логика:</span> если товар продавался стабильно, а потом продажи прекратились — считаем что товар закончился (упущенные продажи восстанавливаются).
     </p>
-    <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
+    <div style="background:rgba(247,147,79,.07);border:1px solid rgba(247,147,79,.2);border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:10px;color:var(--orange)">
+      ⚠️ <strong>Не учитываются в прогнозе:</strong> продажи Сабины, Арины, Снабжения — они работают по заявкам, не по истории.
+    </div>
+    <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <div style="font-size:10px;color:var(--text3);padding:5px 9px;background:var(--bg3);border-radius:5px;border:1px solid var(--border)">
-        Текущих записей в истории: <strong id="salesHistCount" style="color:var(--accent)">0</strong> нед.
+        История: <strong id="salesHistCount" style="color:var(--accent)">0</strong> периодов
       </div>
-      <button class="btn-out" onclick="clearSalesHist()" style="font-size:10px;padding:4px 9px;color:var(--red);border-color:rgba(240,82,82,.3)">🗑 Очистить историю</button>
+      <button class="btn-out" onclick="clearSalesHist()" style="font-size:10px;padding:4px 9px;color:var(--red);border-color:rgba(240,82,82,.3)">🗑 Очистить</button>
     </div>
     <div class="dzone" id="sdzone" onclick="document.getElementById('salesFile').click()" ondragover="odv(event)" ondragleave="odl(event)" ondrop="odrSales(event)">
       <div style="font-size:28px;opacity:.5">📊</div>
-      <p>Файл продаж .xlsx (один период = одна неделя)</p>
-      <p style="font-size:9px;color:var(--text3);margin-top:4px">Можно загружать несколько файлов по очереди для накопления истории</p>
+      <p>Перетащите или нажмите — файл 1С .xlsx</p>
+      <p style="font-size:9px;color:var(--text3);margin-top:4px">Можно загружать несколько файлов (разные периоды) — история накапливается</p>
     </div>
     <input type="file" id="salesFile" accept=".xlsx" style="display:none" onchange="handleSalesFile(this.files[0])">
     <div class="ilog" id="slog" style="display:none"></div>
+    <div id="salesPreview" style="display:none;margin-top:10px"></div>
     <div class="mbrow" style="margin-top:12px">
-      <button class="btn-save" id="applySalesBtn" onclick="applySalesImport()" style="display:none;flex:1">✅ Добавить в историю</button>
+      <button class="btn-save" id="applySalesBtn" onclick="applySalesImport()" style="display:none;flex:1">✅ Добавить в историю прогноза</button>
       <button class="btn-out" onclick="closeModal('salesModal')">Закрыть</button>
     </div>
   </div>
@@ -627,6 +636,24 @@ function getMeatSchedule() {
 
 function saveMeatSchedule(sched) {
   localStorage.setItem('kp_meat_schedule', JSON.stringify(sched));
+  // Sync to Supabase
+  syncSettingToDB('kp_meat_schedule', sched);
+}
+
+// Save activeDays when toggled
+function syncActiveDays(){
+  localStorage.setItem('kp_days', JSON.stringify(activeDays));
+  syncSettingToDB('kp_active_days', activeDays);
+}
+
+async function syncSettingToDB(key, value){
+  if(!sb) return;
+  try{
+    await sb.from('kp_settings').upsert(
+      {key, value, updated_at: new Date().toISOString()},
+      {onConflict: 'key'}
+    );
+  } catch(e){ console.error('syncSettingToDB error:', key, e); }
 }
 
 // ── ABC-based safety stock multipliers ──
@@ -749,14 +776,140 @@ function saveHistEntry(e){
 function initSupabase(){
   sbUrl=localStorage.getItem('sb_url')||'';
   sbKey=localStorage.getItem('sb_key')||'';
+  if(sbUrl&&(sbUrl.includes('github.io')||sbUrl.includes('github.com'))){
+    localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key');
+    sbUrl=''; sbKey='';
+    toast('⚠️ Неверный Supabase URL удалён. Введите правильный в ⚙️ Supabase','warn');
+  }
   if(!sbUrl||!sbKey){setConn(false,'не настроен');return;}
   try{
     sb = supabase.createClient(sbUrl,sbKey);
     setConn(true,'подключение…');
     setupPresence();
-    subscribeOrders();
-    loadOrdersFromDB();
+    subscribeAll();        // realtime subscriptions
+    loadAllFromDB();       // initial load of all shared data
   }catch(e){setConn(false,'ошибка');console.error(e);}
+}
+
+// ── Load ALL shared data from Supabase on startup ──
+async function loadAllFromDB(){
+  if(!sb) return;
+  try{
+    // Run all loads in parallel
+    const [ordRes, stockRes, settRes] = await Promise.all([
+      sb.from('kp_orders').select('*').eq('week', currentWeek),
+      sb.from('kp_stock').select('*'),
+      sb.from('kp_settings').select('*'),
+    ]);
+
+    // Orders
+    if(!ordRes.error && ordRes.data){
+      orders = {};
+      ordRes.data.forEach(r => {
+        if(!orders[r.product_code]) orders[r.product_code] = {};
+        orders[r.product_code][r.source_key] = r.qty || 0;
+      });
+      localStorage.setItem(`kp_orders_${currentWeek}`, JSON.stringify(orders));
+    }
+
+    // Stock
+    if(!stockRes.error && stockRes.data && stockRes.data.length){
+      stockRes.data.forEach(r => { stock[r.product_code] = r.qty || 0; });
+      localStorage.setItem('kp_stock', JSON.stringify(stock));
+      const latest = stockRes.data.sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at))[0];
+      if(latest){ stockDate = new Date(latest.updated_at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); localStorage.setItem('kp_stock_date', stockDate); }
+      renderStock();
+    }
+
+    // Settings (meat schedule, active days, plan overrides, sales history)
+    if(!settRes.error && settRes.data){
+      settRes.data.forEach(row => {
+        const key = row.key;
+        const val = row.value;
+        if(key === 'kp_meat_schedule'){
+          localStorage.setItem('kp_meat_schedule', JSON.stringify(val));
+          renderDays();
+        } else if(key === 'kp_active_days'){
+          activeDays = val;
+          localStorage.setItem('kp_days', JSON.stringify(val));
+          renderDays();
+        } else if(key === 'kp_sales_hist'){
+          salesHistory = val;
+          localStorage.setItem('kp_sales_hist', JSON.stringify(val));
+          updateSalesHistCount();
+        } else if(key === 'kp_extra_products'){
+          extraProducts = val;
+          localStorage.setItem('kp_extra_products', JSON.stringify(val));
+        }
+      });
+    }
+
+    if(currentUser) renderInputTable();
+    renderDash();
+    buildABCCache();
+    setConn(true,'онлайн');
+    console.log('✅ Все данные загружены из Supabase');
+  } catch(e){
+    setConn(false,'ошибка БД');
+    console.error('loadAllFromDB error:', e);
+  }
+}
+
+// ── Subscribe to realtime changes for all tables ──
+function subscribeAll(){
+  if(!sb) return;
+
+  // Orders realtime
+  sb.channel('rt-orders')
+    .on('postgres_changes',{event:'*',schema:'public',table:'kp_orders'}, payload=>{
+      const r = payload.new || {};
+      if(r.week !== currentWeek) return;
+      if(!orders[r.product_code]) orders[r.product_code] = {};
+      orders[r.product_code][r.source_key] = r.qty || 0;
+      localStorage.setItem(`kp_orders_${currentWeek}`, JSON.stringify(orders));
+      refreshRow(r.product_code);
+      renderDash();
+      // Show toast if change from another user
+      if(r.updated_by && r.updated_by !== currentUser){
+        toast('📝 '+r.updated_by+' обновил заявку');
+      }
+    })
+    .subscribe();
+
+  // Stock realtime
+  sb.channel('rt-stock')
+    .on('postgres_changes',{event:'*',schema:'public',table:'kp_stock'}, payload=>{
+      const r = payload.new || {};
+      if(r.product_code) stock[r.product_code] = r.qty || 0;
+      localStorage.setItem('kp_stock', JSON.stringify(stock));
+      renderStock();
+      if(currentUser) renderInputTable();
+      if(r.updated_by && r.updated_by !== currentUser){
+        toast('📦 '+r.updated_by+' обновил остатки склада');
+      }
+    })
+    .subscribe();
+
+  // Settings realtime (meat schedule, sales history, etc.)
+  sb.channel('rt-settings')
+    .on('postgres_changes',{event:'*',schema:'public',table:'kp_settings'}, payload=>{
+      const r = payload.new || {};
+      if(r.key === 'kp_meat_schedule'){
+        localStorage.setItem('kp_meat_schedule', JSON.stringify(r.value));
+        renderDays();
+        toast('⚙️ Расписание сырья обновлено');
+      } else if(r.key === 'kp_active_days'){
+        activeDays = r.value;
+        localStorage.setItem('kp_days', JSON.stringify(r.value));
+        renderDays();
+      } else if(r.key === 'kp_sales_hist'){
+        salesHistory = r.value;
+        localStorage.setItem('kp_sales_hist', JSON.stringify(r.value));
+        updateSalesHistCount();
+        toast('📈 История продаж обновлена');
+      }
+    })
+    .subscribe();
 }
 
 function setConn(live,txt){
@@ -770,7 +923,15 @@ function saveSupabase(){
   const url=document.getElementById('sbUrl').value.trim();
   const key=document.getElementById('sbKey').value.trim();
   if(!url||!key){toast('Заполните оба поля','err');return;}
+  // Validate URL looks like Supabase
+  if(!url.includes('supabase.co')&&!url.includes('supabase.io')){
+    toast('URL должен быть вида https://xxxx.supabase.co','err');return;
+  }
+  if(url.includes('github.io')){
+    toast('Это GitHub URL, нужен URL от supabase.com','err');return;
+  }
   localStorage.setItem('sb_url',url); localStorage.setItem('sb_key',key);
+  sbUrl=url; sbKey=key;
   closeModal('setupModal');
   initSupabase();
   toast('Supabase подключён! Проверьте статус вверху.');
@@ -817,21 +978,7 @@ ALTER TABLE kp_stock DISABLE ROW LEVEL SECURITY;`;
   b.textContent=sql; b.style.display='block';
 }
 
-async function loadOrdersFromDB(){
-  if(!sb)return;
-  try{
-    const {data,error}=await sb.from('kp_orders').select('*').eq('week',currentWeek);
-    if(error)throw error;
-    orders={};
-    (data||[]).forEach(r=>{
-      if(!orders[r.product_code])orders[r.product_code]={};
-      orders[r.product_code][r.source_key]=r.qty||0;
-    });
-    if(currentUser) renderInputTable();
-    renderDash();
-    setConn(true,'онлайн');
-  }catch(e){setConn(false,'ошибка БД');console.error(e);}
-}
+// loadOrdersFromDB() replaced by loadAllFromDB()
 
 async function upsertOrder(code,src,qty){
   if(!sb)return;
@@ -842,19 +989,7 @@ async function upsertOrder(code,src,qty){
   }catch(e){console.error('upsert error',e);}
 }
 
-function subscribeOrders(){
-  if(!sb)return;
-  sb.channel('orders-realtime')
-    .on('postgres_changes',{event:'*',schema:'public',table:'kp_orders'},(payload)=>{
-      const r=payload.new||{};
-      if(r.week!==currentWeek)return;
-      if(!orders[r.product_code])orders[r.product_code]={};
-      orders[r.product_code][r.source_key]=r.qty||0;
-      refreshRow(r.product_code);
-      renderDash();
-    })
-    .subscribe();
-}
+// subscribeOrders() replaced by subscribeAll()
 
 function setupPresence(){
   if(!sb||!currentUser)return;
@@ -896,6 +1031,11 @@ function init(){
   buildABCCache();
   document.getElementById('weekSel').value=currentWeek;
   loadOrdersLocal();
+  // If no saved schedule — apply smart default based on actual products
+  if(!localStorage.getItem('kp_meat_schedule')){
+    const smart = buildSmartDefault();
+    saveMeatSchedule(smart);
+  }
   renderDays();
   renderStock();
   updateUserUI();
@@ -935,7 +1075,7 @@ function updateUserUI(){
 function onWeekChange(){
   currentWeek=document.getElementById('weekSel').value;
   loadOrdersLocal();
-  if(sb)loadOrdersFromDB(); else if(currentUser)renderInputTable();
+  if(sb) loadAllFromDB(); else if(currentUser) renderInputTable();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -954,7 +1094,7 @@ function renderDays(){
 }
 function toggleDay(k){
   activeDays[k]=!activeDays[k];
-  localStorage.setItem('kp_days',JSON.stringify(activeDays));
+  syncActiveDays();
   renderDays();
 }
 
@@ -1250,29 +1390,27 @@ CZ (низкий спрос, нестабильный): ${top.CZ||'нет дан
   let recoHtml='<div class="reco-list"><div style="font-size:11px;color:var(--text3);padding:8px 0">⏳ ИИ анализирует данные…</div></div>';
   renderABCLayout(totals,matrix,area,recoHtml);
 
+  // Local ABC/XYZ recommendations (no external API needed)
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:900,messages:[{role:'user',content:prompt}]})
-    });
-    const data=await res.json();
-    const text=data.content?.[0]?.text||'Нет ответа';
-    const recs=text.split('\n').filter(l=>l.trim().length>10);
-    recoHtml=`<div class="reco-list">${recs.map(l=>{
-      const [icon,...rest]=l.replace(/^\d+\.\s*/,'').split('|');
-      const title=(rest[0]||'').trim();
-      const body=(rest[1]||icon||l).trim();
-      const prioRaw=(rest[2]||'').toLowerCase();
-      const prio=prioRaw.includes('высок')?'high':prioRaw.includes('средн')?'med':'low';
-      const prioLabel=prio==='high'?'🔴 Высокий':prio==='med'?'🟡 Средний':'🟢 Низкий';
-      const prioClass=`p-${prio}`;
-      return `<div class="reco-item"><div class="reco-icon">${icon.trim()||'💡'}</div>
-        <div><div class="reco-title">${title||body.substring(0,50)}</div>
-        <div class="reco-text">${title?body:''}</div>
-        <span class="reco-prio ${prioClass}">${prioLabel}</span></div></div>`;
-    }).join('')}</div>`;
+    const axItems = matrix['AX']||[];
+    const azItems = matrix['AZ']||[];
+    const czItems = matrix['CZ']||[];
+    const bxItems = matrix['BX']||[];
+    const recos = [
+      axItems.length ? {icon:'⭐',title:'Группа AX — приоритет производства',text:'Стабильный высокий спрос: '+axItems.slice(0,3).map(p=>p.name.substring(0,20)).join(', ')+'. Держите постоянный запас +50%, производите еженедельно.',prio:'high'} : null,
+      azItems.length ? {icon:'⚠️',title:'Группа AZ — непредсказуемый высокий спрос',text:'Высокий но нестабильный спрос: '+azItems.slice(0,3).map(p=>p.name.substring(0,20)).join(', ')+'. Планируйте с буфером +50%, следите за заявками.',prio:'high'} : null,
+      bxItems.length ? {icon:'📦',title:'Группа BX — стабильное среднее производство',text:bxItems.length+' позиций со стабильным средним спросом. Производите по расписанию с запасом +30%.',prio:'med'} : null,
+      czItems.length ? {icon:'📉',title:'Группа CZ — кандидаты на оптимизацию',text:'Нестабильный низкий спрос: '+czItems.slice(0,3).map(p=>p.name.substring(0,20)).join(', ')+'. Рассмотрите производство только под конкретные заявки.',prio:'low'} : null,
+      {icon:'💡',title:'Общая рекомендация',text:'Сфокусируйтесь на группах A ('+((matrix["AX"]||[]).length+(matrix["AY"]||[]).length+(matrix["AZ"]||[]).length)+' поз.) — они дают 80% объёма. Группа C ('+((matrix["CX"]||[]).length+(matrix["CY"]||[]).length+(matrix["CZ"]||[]).length)+' поз.) требует минимального внимания.',prio:'med'}
+    ].filter(Boolean);
+
+    recoHtml='<div class="reco-list">'+recos.map(r=>'<div class="reco-item"><div class="reco-icon">'+r.icon+'</div>'
+      +'<div><div class="reco-title">'+r.title+'</div>'
+      +'<div class="reco-text">'+r.text+'</div>'
+      +'<span class="reco-prio p-'+r.prio+'">'+(r.prio==='high'?'🔴 Высокий':r.prio==='med'?'🟡 Средний':'🟢 Низкий')+'</span>'
+      +'</div></div>').join('')+'</div>';
   }catch(e){
-    recoHtml=`<div class="reco-list"><div class="reco-item"><div class="reco-icon">⚠️</div><div><div class="reco-title">ИИ недоступен</div><div class="reco-text">Базовые рекомендации: AX — держите постоянный запас. AZ — планируйте с буфером. CZ — рассмотрите вывод из ассортимента.</div></div></div></div>`;
+    recoHtml='<div class="reco-list"><div class="reco-item"><div class="reco-icon">⚠️</div><div><div class="reco-title">Ошибка анализа</div><div class="reco-text">'+e.message+'</div></div></div></div>';
   }
   renderABCLayout(totals,matrix,area,recoHtml);
 }
@@ -1447,14 +1585,18 @@ async function genPlan(){
 ПН=Индейка+Курица, ВТ=Лосось, СР=Кролик+Телятина, ЧТ=Овощи.
 Потребности: ${needs.map(p=>`${p.name}[${p.cat}]: заявка=${p.orderTotal}, прогноз=${p.forecast}, эфф.спрос=${p.effectiveDemand}${p.extraOrder>0?` (доп.заказ +${p.extraOrder})`:''}${p.demandSource==='forecast'?' [по прогнозу]':''}, остаток=${p.st}, к пр-ву=${p.needed}`).join('; ')}.
 Отметь: 1) позиции только по прогнозу (нет заявок) 2) позиции с доп.заказами сверх прогноза 3) критические остатки. Кратко, по-русски.`;
+  // Generate local AI commentary without external API (CORS limitation on GitHub Pages)
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:700,messages:[{role:'user',content:prompt}]})
-    });
-    const d=await r.json();
-    addAI(d.content?.[0]?.text||'—');
-  }catch{addAI('⚠️ ИИ недоступен. План построен локально.');}
+    const criticalItems = needs.filter(p=>p.st===0&&p.needed>0);
+    const highDemand = needs.filter(p=>p.needed>100).sort((a,b)=>b.needed-a.needed).slice(0,3);
+    const forecastOnly = needs.filter(p=>p.orderTotal===0&&p.forecast>0&&p.needed>0);
+    let msg = '📊 <strong>Анализ плана:</strong><br>';
+    if(criticalItems.length) msg += '🔴 <strong>Критично (нет остатка):</strong> '+criticalItems.map(p=>p.name.substring(0,25)).join(', ')+'<br>';
+    if(highDemand.length) msg += '📈 <strong>Топ спрос:</strong> '+highDemand.map(p=>p.name.substring(0,20)+' ('+p.needed+')').join(', ')+'<br>';
+    if(forecastOnly.length) msg += '🔮 <strong>По прогнозу (без заявок):</strong> '+forecastOnly.length+' позиций<br>';
+    msg += '✅ Итого к производству: <strong>'+needs.reduce((s,p)=>s+p.needed,0)+' ед.</strong> по '+needs.length+' позициям';
+    addAI(msg);
+  }catch(e){addAI('⚠️ Ошибка анализа: '+e.message);}
   planResult=buildPlan(needs,activeDaysList);
   renderPlan(needs,activeDaysList);
   renderSched(planResult,activeDaysList);
@@ -1575,15 +1717,49 @@ function renderSched(plan,activeDaysList){
 
   let h='';
 
-  // Warning for unscheduled items
+  // Warning for unscheduled items — with per-item day picker
   if(unscheduled.length){
-    h+='<div style="background:rgba(247,147,79,.08);border:1px solid rgba(247,147,79,.3);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:11px">'
-     +'<strong style="color:var(--orange)">⚠️ '+unscheduled.length+' позиций не распределены по дням</strong> — их категория не назначена ни на один активный день.<br>'
-     +'<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">'
-     +unscheduled.map(p=>`<span style="background:rgba(167,139,250,.12);color:#a78bfa;padding:2px 8px;border-radius:4px;font-size:10px">${p.name.substring(0,30)} <strong>(${p.needed})</strong></span>`).join('')
-     +'</div>'
-     +'<div style="margin-top:8px;font-size:10px;color:var(--text3)">→ Нажмите ⚙️ Изменить в сайдбаре чтобы назначить категорию на день</div>'
-     +'</div>';
+    // Group unscheduled by category
+    const unschedByCat = {};
+    unscheduled.forEach(p => {
+      if(!unschedByCat[p.cat]) unschedByCat[p.cat] = [];
+      unschedByCat[p.cat].push(p);
+    });
+
+    const dayOptions = activeDaysList.map(d =>
+      `<option value="${d.key}">${d.name} — ${d.full}</option>`
+    ).join('');
+
+    // Build category blocks using template literals to avoid quote issues
+    let catBlocks = '';
+    Object.entries(unschedByCat).forEach(([cat, items]) => {
+      const catColor = CC[cat] || '#8a93b0';
+      const safeCat = cat.replace(/'/g, "\\'");
+      const itemPills = items.map(p =>
+        `<span style="background:rgba(167,139,250,.1);color:#a78bfa;padding:2px 8px;border-radius:4px;font-size:10px">${p.name.substring(0,28)} <strong>(${p.needed})</strong></span>`
+      ).join('');
+      catBlocks += `<div style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+          <span style="background:${catColor}22;color:${catColor};padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700">${cat}</span>
+          <select onchange="assignCatToDay('${safeCat}',this.value)" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:10px;padding:2px 7px;outline:none">
+            <option value="">— выбрать день —</option>${dayOptions}
+          </select>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:3px">${itemPills}</div>
+      </div>`;
+    });
+
+    h += `<div style="background:rgba(247,147,79,.08);border:1px solid rgba(247,147,79,.3);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <strong style="color:var(--orange);font-size:11px">⚠️ ${unscheduled.length} позиций без дня производства</strong>
+        <div style="display:flex;gap:6px">
+          <select id="quickAssignDay" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:10px;padding:3px 7px;outline:none">${dayOptions}</select>
+          <button onclick="quickAssignAll()" style="background:var(--orange);border:none;color:#fff;padding:4px 10px;border-radius:5px;font-size:10px;cursor:pointer;font-family:Manrope,sans-serif">Назначить все →</button>
+          <button onclick="openMeatModal()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:5px;font-size:10px;cursor:pointer;font-family:Manrope,sans-serif">⚙️ Расписание</button>
+        </div>
+      </div>
+      ${catBlocks}
+    </div>`;
   }
 
   h+='<div class="sched-grid">';
@@ -1658,6 +1834,47 @@ function clearAllOverrides(){
     renderSched(planResult,activeDaysList);
   }
   toast('Все изменения сброшены','warn');
+}
+
+// Assign a whole category to a day (saves to schedule and rebuilds plan)
+function assignCatToDay(cat, dayKey){
+  if(!dayKey) return;
+  const sched = getMeatSchedule();
+  if(!sched[dayKey]) sched[dayKey] = [];
+  if(!sched[dayKey].includes(cat)) sched[dayKey].push(cat);
+  saveMeatSchedule(sched);
+  renderDays();
+  // Rebuild plan immediately
+  const needs = calcNeeds();
+  const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+  planResult = buildPlan(needs, activeDaysList);
+  renderSched(planResult, activeDaysList);
+  toast('✅ Категория «'+cat+'» добавлена в '+DAYS.find(d=>d.key===dayKey)?.full);
+}
+
+// Assign ALL unscheduled items to selected day
+function quickAssignAll(){
+  const dayKey = document.getElementById('quickAssignDay')?.value;
+  if(!dayKey){ toast('Выберите день','warn'); return; }
+  const needs = calcNeeds();
+  const unscheduled = getUnscheduled(needs, planResult||{});
+  if(!unscheduled.length){ toast('Все позиции уже распределены','warn'); return; }
+
+  // Get unique cats of unscheduled
+  const cats = [...new Set(unscheduled.map(p=>p.cat))];
+  const sched = getMeatSchedule();
+  cats.forEach(cat => {
+    if(!sched[dayKey]) sched[dayKey] = [];
+    if(!sched[dayKey].includes(cat)) sched[dayKey].push(cat);
+  });
+  saveMeatSchedule(sched);
+  renderDays();
+
+  // Rebuild plan
+  const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+  planResult = buildPlan(needs, activeDaysList);
+  renderSched(planResult, activeDaysList);
+  toast('✅ '+unscheduled.length+' позиций назначены на '+DAYS.find(d=>d.key===dayKey)?.full);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1766,7 +1983,7 @@ function handleIIKO(file){
 
       // Find "Расход → Кол-во" — actual sales/consumption
       const salesCol = findIIKOCol(grpRow, hdr, ['Расход', 'Продажи', 'Реализация', 'Отгружено', 'Sale', 'Расх'], 6);
-      ilog('✓ Колонка продаж найдена: ' + (salesCol+1),'ok');
+      ilog('ℹ️ IIKO: читаем только остатки (продажи загружаются отдельно из 1С)','ok');
 
       const parsedStock={}, parsedSales={};
       let matchedStock=0, matchedSales=0;
@@ -2324,61 +2541,241 @@ function initModeButtons(){
 // ═══════════════════════════════════════════════════════
 function odrSales(e){e.preventDefault();document.getElementById('sdzone').classList.remove('drag');handleSalesFile(e.dataTransfer.files[0]);}
 
+// Managers/sources to EXCLUDE from forecast (they work by orders, not history)
+const EXCLUDE_FROM_FORECAST = ['сабина','арина','снабжение','sabina','arina'];
+
+function isExcludedManager(name){
+  if(!name) return false;
+  const n = String(name).toLowerCase().trim();
+  return EXCLUDE_FROM_FORECAST.some(e => n.includes(e));
+}
+
+function parseNum(val){
+  return Math.abs(parseFloat(String(val||0).replace(',','.').replace(/[\s\u00a0]/g,''))||0);
+}
+
 function handleSalesFile(file){
   if(!file||!file.name.endsWith('.xlsx')){slog('❌ Нужен .xlsx файл','e');return;}
   const logEl=document.getElementById('slog'); logEl.style.display='block'; logEl.innerHTML='';
-  slog(`📂 Читаю: ${file.name}`,'ok');
+  const preview=document.getElementById('salesPreview'); if(preview) preview.style.display='none';
+  slog('📂 Читаю: '+file.name,'ok');
   const reader=new FileReader();
-  reader.onload=e=>{
+  reader.onload=ev=>{
     try{
-      const wb=XLSX.read(e.target.result,{type:'array'});
+      const wb=XLSX.read(ev.target.result,{type:'array'});
       const ws=wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-      slog(`📋 Строк: ${rows.length}`,'ok');
-      // Find header row
-      let headerRow=-1;
-      for(let i=0;i<Math.min(rows.length,15);i++){
-        if(String(rows[i][0]).trim()==='Код'){headerRow=i;break;}
+      slog('📋 Строк: '+rows.length,'ok');
+
+      // ── Detect format ──
+      // 1С format: row 9 has dates like "01.06.2026 г.", row 10 has "Количество"/"Выручка"
+      // IIKO format: has "Код" in col A
+      const is1C = rows.slice(0,12).some(r => String(r[6]||'').includes('г.') || String(r[7]||'').includes('г.'));
+      const isIIKO = rows.slice(0,15).some(r => String(r[0]||'').trim()==='Код');
+
+      if(is1C){
+        slog('✅ Формат: 1С (отчёт по продажам по дням)','ok');
+        parse1CSales(rows);
+      } else if(isIIKO){
+        slog('✅ Формат: IIKO (оборотно-сальдовая)','ok');
+        parseIIKOSales(rows);
+      } else {
+        slog('⚠️ Формат не определён, пробую как 1С...','w');
+        parse1CSales(rows);
       }
-      if(headerRow===-1){slog('❌ Не найдена строка заголовков','e');return;}
-      // Find "Расход → Кол-во" column — typically around col 6-10
-      const hdr=rows[headerRow];
-      const grpRow=rows[headerRow-1]||[];
-      let salesCol=-1;
-      // Look for "Расход" group then "Кол-во" under it
-      // Search for sales column: try multiple possible group names
-      const salesGroupNames = ['Расход', 'Продажи', 'Реализация', 'Отгружено', 'Расх', 'Sale'];
-      for(const gname of salesGroupNames){
-        let gStart=-1;
-        for(let ci=0;ci<grpRow.length;ci++){if(String(grpRow[ci]).toLowerCase().includes(gname.toLowerCase())){gStart=ci;break;}}
-        if(gStart>=0){
-          for(let ci=gStart;ci<Math.min(hdr.length,gStart+6);ci++){
-            const cell=String(hdr[ci]).trim().toLowerCase();
-            if(cell==='кол-во'||cell==='количество'){salesCol=ci;break;}
-          }
-        }
-        if(salesCol!==-1) break;
-      }
-      if(salesCol===-1) salesCol=6;
-      slog(`✓ Колонка продаж (Расход→Кол-во): ${salesCol+1}`,'ok');
-      const parsed={};let matched=0;
-      for(let i=headerRow+1;i<rows.length;i++){
-        const row=rows[i];
-        const code=String(row[0]).trim();
-        if(!code||code==='Код')continue;
-        const qty=Math.abs(Math.round(parseFloat(String(row[salesCol]).replace(',','.').replace(/\s/g,''))||0));
-        if(qty>0||PRODUCTS.find(p=>p.code===code)){
-          parsed[code]=qty;
-          if(PRODUCTS.find(p=>p.code===code))matched++;
-        }
-      }
-      slog(`✅ Позиций с продажами: ${Object.keys(parsed).length}, совпало: ${matched}`,'ok');
-      PRODUCTS.filter(p=>parsed[p.code]>0).slice(0,5).forEach(p=>slog(`  • ${p.name.substring(0,35)}: ${parsed[p.code]}`,'ok'));
-      pendingSalesImport={data:parsed,file:file.name,ts:ts()};
-      document.getElementById('applySalesBtn').style.display='flex';
-    }catch(err){slog('❌ '+err.message,'e');}
+    }catch(err){slog('❌ '+err.message,'e');console.error(err);}
   };
   reader.readAsArrayBuffer(file);
+}
+
+function parse1CSales(rows){
+  // Row 9 (index 8): dates in cols 6,8,10,12,14,16,18 (0-indexed)
+  // Row 10 (index 9): "Количество"/"Выручка" under each date
+  // Col 4 (index 4): Артикул
+  // Hierarchy: товар (has артикул) → менеджер → клиент → заказ
+
+  const dateRow = rows[8] || [];
+  const qtyRow  = rows[9] || [];
+
+  // Find date columns (cols with "г." in dateRow)
+  const dateCols = [];
+  dateRow.forEach((cell, ci) => {
+    if(String(cell).includes('г.')){
+      // Find qty col: same ci or ci+1 where "Количество"
+      let qtyCol = ci;
+      if(String(qtyRow[ci]).toLowerCase().includes('количество')) qtyCol = ci;
+      else if(String(qtyRow[ci+1]||'').toLowerCase().includes('количество')) qtyCol = ci+1;
+      dateCols.push({date: String(cell).replace(' г.','').trim(), col: qtyCol});
+    }
+  });
+
+  if(!dateCols.length){slog('❌ Не найдены колонки с датами (ожидается "01.06.2026 г." в строке 9)','e');return;}
+  slog('📅 Дат найдено: '+dateCols.length+' ('+dateCols[0].date+' … '+dateCols[dateCols.length-1].date+')','ok');
+
+  // Parse product rows — by артикул in col 4
+  // { code: { date: qty, ... } }
+  const byCodeByDay = {};
+  // Track current product
+  let currentCode = null;
+  let currentExcludedManager = false;
+
+  for(let i=13; i<rows.length-1; i++){
+    const row = rows[i];
+    const name = String(row[0]||'').trim();
+    const art  = String(row[4]||'').trim();
+
+    // Товарная строка — есть артикул
+    if(art && /^\d+$/.test(art)){
+      currentCode = art;
+      currentExcludedManager = false;
+      if(!byCodeByDay[art]) byCodeByDay[art]={};
+      // Sum all day quantities on this line (product totals)
+      dateCols.forEach(({date,col})=>{
+        const qty = parseNum(row[col]);
+        if(qty>0) byCodeByDay[art][date]=(byCodeByDay[art][date]||0)+qty;
+      });
+      continue;
+    }
+
+    // Менеджерская строка — нет артикула, name не пустой, не начинается с цифр
+    if(name && currentCode && !art){
+      // Check if this is a manager we want to exclude
+      if(isExcludedManager(name)){
+        currentExcludedManager = true;
+        // Subtract this manager's sales from the product totals
+        dateCols.forEach(({date,col})=>{
+          const qty = parseNum(row[col]);
+          if(qty>0 && byCodeByDay[currentCode]){
+            byCodeByDay[currentCode][date] = Math.max(0,(byCodeByDay[currentCode][date]||0)-qty);
+          }
+        });
+        slog('  ↳ Исключаем менеджера: '+name.substring(0,30),'w');
+      } else {
+        currentExcludedManager = false;
+      }
+    }
+  }
+
+  // ── Smart missed sales logic ──
+  // For each product: if it sold stably for N days then suddenly stopped,
+  // fill gaps with the product's own moving average for that day-of-week
+  const productCodes = Object.keys(byCodeByDay);
+  const adjustedTotals = {};
+  let totalAdjusted = 0;
+
+  productCodes.forEach(code => {
+    const dayData = byCodeByDay[code]; // { "01.06.2026": qty, ... }
+    const dates = dateCols.map(d=>d.date);
+    const qtys = dates.map(d=>dayData[d]||0);
+
+    // Calculate average of non-zero days
+    const nonZero = qtys.filter(v=>v>0);
+    if(!nonZero.length){ adjustedTotals[code]=0; return; }
+
+    const avg = nonZero.reduce((s,v)=>s+v,0)/nonZero.length;
+    const totalDays = dates.length;
+    const zeroDays = qtys.filter(v=>v===0).length;
+    const zeroRatio = zeroDays/totalDays;
+
+    // If >40% of days are zero AND product sold on other days → suspect stockout
+    // Fill zeros with 50% of average (conservative estimate for missed sales)
+    let adjustedTotal = qtys.reduce((s,v)=>s+v,0);
+    if(zeroRatio>0.4 && nonZero.length>=2){
+      const missedEstimate = Math.round(zeroDays * avg * 0.5);
+      adjustedTotal += missedEstimate;
+      totalAdjusted++;
+    }
+
+    adjustedTotals[code] = Math.round(adjustedTotal);
+  });
+
+  // Weekly total per product
+  const finalData = {};
+  let matched=0, total=0;
+  productCodes.forEach(code=>{
+    if(adjustedTotals[code]>0){
+      finalData[code]=adjustedTotals[code];
+      if(allProducts().find(p=>p.code===code)) matched++;
+      total++;
+    }
+  });
+
+  slog('✅ Товаров с продажами: '+total+' (совпало с базой: '+matched+')','ok');
+  if(totalAdjusted>0) slog('📈 Восстановлено упущенных продаж: '+totalAdjusted+' позиций','ok');
+
+  // Preview top products
+  const topProds = allProducts().filter(p=>finalData[p.code]>0)
+    .sort((a,b)=>(finalData[b.code]||0)-(finalData[a.code]||0)).slice(0,6);
+  topProds.forEach(p=>slog('  • '+p.name.substring(0,35)+': '+finalData[p.code]+' шт','ok'));
+
+  // Show preview table
+  showSalesPreview(finalData, dateCols, byCodeByDay);
+
+  pendingSalesImport={data:finalData, byDay:byCodeByDay, dateCols, file:file.name, ts:ts(), format:'1c'};
+  document.getElementById('applySalesBtn').style.display='flex';
+}
+
+function parseIIKOSales(rows){
+  // Legacy IIKO format handler
+  let headerRow=-1;
+  for(let i=0;i<Math.min(rows.length,15);i++){
+    if(String(rows[i][0]).trim()==='Код'){headerRow=i;break;}
+  }
+  if(headerRow===-1){slog('❌ Не найден заголовок IIKO','e');return;}
+  const hdr=rows[headerRow], grpRow=rows[headerRow-1]||[];
+  const salesGroupNames=['Расход','Продажи','Реализация','Отгружено','Расх','Sale'];
+  let salesCol=-1;
+  for(const gname of salesGroupNames){
+    let gStart=-1;
+    for(let ci=0;ci<grpRow.length;ci++){if(String(grpRow[ci]).toLowerCase().includes(gname.toLowerCase())){gStart=ci;break;}}
+    if(gStart>=0){
+      for(let ci=gStart;ci<Math.min(hdr.length,gStart+6);ci++){
+        if(['кол-во','количество'].includes(String(hdr[ci]).trim().toLowerCase())){salesCol=ci;break;}
+      }
+    }
+    if(salesCol!==-1) break;
+  }
+  if(salesCol===-1) salesCol=6;
+  slog('✓ Колонка продаж IIKO: '+(salesCol+1),'ok');
+  const parsed={};let matched=0;
+  for(let i=headerRow+1;i<rows.length;i++){
+    const row=rows[i]; const code=String(row[0]).trim();
+    if(!code||code==='Код') continue;
+    const qty=parseNum(row[salesCol]);
+    if(qty>0){parsed[code]=qty; if(allProducts().find(p=>p.code===code))matched++;}
+  }
+  slog('✅ IIKO: '+Object.keys(parsed).length+' позиций, совпало: '+matched,'ok');
+  pendingSalesImport={data:parsed,file:file.name,ts:ts(),format:'iiko'};
+  document.getElementById('applySalesBtn').style.display='flex';
+}
+
+function showSalesPreview(data, dateCols, byDay){
+  const preview = document.getElementById('salesPreview');
+  if(!preview) return;
+  const topProds = allProducts().filter(p=>data[p.code]>0)
+    .sort((a,b)=>(data[b.code]||0)-(data[a.code]||0)).slice(0,8);
+  if(!topProds.length){preview.style.display='none';return;}
+
+  let html = '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px;font-size:10px">'
+    +'<div style="font-weight:700;color:var(--text2);margin-bottom:8px">Топ товаров по продажам за период:</div>'
+    +'<table style="width:100%;border-collapse:collapse">'
+    +'<tr style="color:var(--text3);font-size:9px"><th style="text-align:left;padding:2px 0">Продукт</th>'
+    + dateCols.slice(0,5).map(d=>'<th style="text-align:center;padding:2px 3px">'+d.date.substring(0,5)+'</th>').join('')
+    +'<th style="text-align:center;color:var(--green)">Итого</th></tr>';
+
+  topProds.forEach(p=>{
+    const dayQtys = (byDay[p.code]||{});
+    html += '<tr><td style="color:var(--text);padding:3px 0">'+p.name.substring(0,28)+'</td>'
+      + dateCols.slice(0,5).map(d=>{
+          const q=dayQtys[d.date]||0;
+          return '<td style="text-align:center;color:'+(q?'var(--text2)':'var(--text3)')+'">'+( q||'—')+'</td>';
+        }).join('')
+      + '<td style="text-align:center;font-weight:700;color:var(--green)">'+data[p.code]+'</td></tr>';
+  });
+
+  html += '</table></div>';
+  preview.innerHTML = html;
+  preview.style.display = 'block';
 }
 
 function slog(msg,type){
@@ -2389,20 +2786,27 @@ function slog(msg,type){
 
 function applySalesImport(){
   if(!pendingSalesImport)return;
-  // Append this week's sales to salesHistory
-  PRODUCTS.forEach(p=>{
+  const data = pendingSalesImport.data;
+  // Aggregate by product: push weekly total into salesHistory
+  allProducts().forEach(p=>{
     if(!salesHistory[p.code])salesHistory[p.code]=[];
-    salesHistory[p.code].push(pendingSalesImport.data[p.code]||0);
-    // Keep last 12 weeks
-    if(salesHistory[p.code].length>12)salesHistory[p.code].shift();
+    const qty = data[p.code]||0;
+    salesHistory[p.code].push(qty);
+    if(salesHistory[p.code].length>12)salesHistory[p.code].shift(); // keep 12 weeks max
   });
   localStorage.setItem('kp_sales_hist',JSON.stringify(salesHistory));
-  saveHistEntry({ts:ts(),user:currentUser||'Система',week:currentWeek,changes:[`История продаж обновлена: ${pendingSalesImport.file}`]});
+  // Sync full salesHistory object to Supabase settings table
+  syncSettingToDB('kp_sales_hist', salesHistory);
+
+  const count = Object.values(data).filter(v=>v>0).length;
+  saveHistEntry({ts:ts(),user:currentUser||'Система',week:currentWeek,
+    changes:['История продаж из 1С: '+pendingSalesImport.file+' ('+count+' позиций)']});
   updateSalesHistCount();
+  buildABCCache();
   if(currentUser)renderInputTable();
   renderDash();
   closeModal('salesModal');
-  toast(`История продаж обновлена (${Object.values(pendingSalesImport.data).filter(v=>v>0).length} позиций)`);
+  toast('✅ История продаж обновлена: '+count+' позиций из '+pendingSalesImport.file);
   pendingSalesImport=null;
 }
 
@@ -2576,28 +2980,40 @@ function saveMeatSched(){
   }
 }
 
+function openMeatModal(){ showModal("meatModal"); }
+function hardResetSchedule(){
+  localStorage.removeItem('kp_meat_schedule');
+  editingSched = null;
+  applySmartDefault();
+  toast('✅ Расписание сброшено и пересчитано');
+}
+
 function resetMeatSched(){
   if(!confirm('Сбросить расписание на стандартное?')) return;
   applySmartDefault();
 }
 
 // Build smart default schedule from actual product categories
-function applySmartDefault(){
+function buildSmartDefault(){
   const allCats = getAllCats();
-  // Standard rules
   const rules = {
     'Индейка':['mon'],'Курица':['mon'],'Лосось':['tue'],
     'Кролик':['wed'],'Телятина':['wed'],'Овощи':['thu'],
     'Творог':['fri'],'Брынза':['fri'],
   };
-  editingSched = { mon:[], tue:[], wed:[], thu:[], fri:[], sat:[] };
+  const sched = { mon:[], tue:[], wed:[], thu:[], fri:[], sat:[] };
   allCats.forEach(cat => {
-    const days = rules[cat] || ['fri']; // unknown cats → friday
+    const days = rules[cat] || ['fri'];
     days.forEach(d => {
-      if(!editingSched[d]) editingSched[d] = [];
-      if(!editingSched[d].includes(cat)) editingSched[d].push(cat);
+      if(!sched[d]) sched[d] = [];
+      if(!sched[d].includes(cat)) sched[d].push(cat);
     });
   });
+  return sched;
+}
+
+function applySmartDefault(){
+  editingSched = buildSmartDefault();
   renderMeatSchedGrid();
   checkUnassignedCats();
   toast('✅ Стандартное расписание применено');

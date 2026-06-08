@@ -1265,6 +1265,9 @@ function renderDash(){
     <div class="kpi"><div class="kpi-label">Мало на складе</div>
       <div class="kpi-val ${lowStock?'kpi-warn':'kpi-good'}">${lowStock}</div>
       <div class="kpi-sub">позиций (< 20 шт)</div></div>
+    <div class="kpi"><div class="kpi-label">Аварийное пр-во</div>
+      <div class="kpi-val ${(planResult&&planResult._emergency&&planResult._emergency.length)?'kpi-bad':'kpi-good'}">${planResult&&planResult._emergency?planResult._emergency.length:0}</div>
+      <div class="kpi-sub">позиций — добавлены досрочно</div></div>
   </div>
   <div class="charts-row">
     <div class="chart-card"><div class="chart-title">Заказы по категориям</div><div class="chart-wrap"><canvas id="chartCat"></canvas></div></div>
@@ -1611,20 +1614,71 @@ function addAI(text){
   p.appendChild(d); p.scrollTop=p.scrollHeight;
 }
 
-function buildPlan(needs,activeDaysList){
-  const plan={}; activeDaysList.forEach(d=>plan[d.key]=[]);
-  const catDay=getCatDay();
+// ── Emergency threshold: if stock < N days of avg demand → produce ASAP ──
+// Returns how many days of stock are left
+function daysOfStock(p){
+  if(!p.st || p.st <= 0) return 0;
+  const dailyDemand = (p.effectiveDemand || p.forecast || 1) / 7;
+  return dailyDemand > 0 ? Math.floor(p.st / dailyDemand) : 999;
+}
+
+// Is this product critically low? (less than N days of stock until its normal production day)
+function isCriticalStock(p, daysUntilNormalDay){
+  const days = daysOfStock(p);
+  // Critical if stock will run out before normal production day
+  return days <= daysUntilNormalDay;
+}
+
+function buildPlan(needs, activeDaysList){
+  const plan = {}; activeDaysList.forEach(d => plan[d.key] = []);
+  const catDay = getCatDay();
+  const emergencyItems = []; // items that got moved to earlier day
+
+  // Map day key → position index (0=first active day, 1=second, etc.)
+  const dayIndex = {};
+  activeDaysList.forEach((d, i) => dayIndex[d.key] = i);
+
   for(const p of needs){
-    if(p.needed<=0)continue;
-    // Find preferred days that are actually active
-    const pref=(catDay[p.cat]||[]).filter(dk=>plan[dk]!==undefined);
-    if(pref.length>0){
-      // Place in ALL matching active days (same qty — kitchen produces for that category day)
-      pref.forEach(dk=>plan[dk].push(p));
+    if(p.needed <= 0) continue;
+
+    // Preferred days for this category (active ones only)
+    const pref = (catDay[p.cat] || []).filter(dk => plan[dk] !== undefined);
+
+    if(pref.length === 0){
+      // No matching day — leave unscheduled
+      continue;
     }
-    // If no matching day found — leave unscheduled (don't dump into day 0)
-    // It will show as "не распределено" warning
+
+    // Find earliest preferred day index
+    const earliestPrefIdx = Math.min(...pref.map(dk => dayIndex[dk] ?? 999));
+
+    // Check if stock is critically low → needs earlier production
+    // "Days until normal day" = how many days before the preferred production day
+    // Approximate: each active day = ~1 workday apart
+    const daysUntilNormal = earliestPrefIdx; // rough: 0=today(mon), 1=tue, etc.
+    const stockDays = daysOfStock(p);
+    const isEmergency = p.st === 0 || (stockDays < daysUntilNormal && daysUntilNormal > 0);
+
+    if(isEmergency && activeDaysList.length > 0){
+      // Place in FIRST active day (produce ASAP regardless of meat schedule)
+      const firstDay = activeDaysList[0].key;
+      // Avoid duplicating if first day IS already a preferred day
+      if(pref.includes(firstDay)){
+        pref.forEach(dk => plan[dk].push(p));
+      } else {
+        // Add to first day as emergency + normal preferred days
+        plan[firstDay].push({...p, emergency: true});
+        pref.forEach(dk => plan[dk].push(p));
+        emergencyItems.push({name: p.name, cat: p.cat, stock: p.st, stockDays, normalDay: pref[0]});
+      }
+    } else {
+      // Normal: place in all preferred days
+      pref.forEach(dk => plan[dk].push(p));
+    }
   }
+
+  // Attach emergency report to plan for display
+  plan._emergency = emergencyItems;
   return plan;
 }
 
@@ -1762,6 +1816,20 @@ function renderSched(plan,activeDaysList){
     </div>`;
   }
 
+  // Show emergency production summary
+  const emergency = plan._emergency || [];
+  if(emergency.length){
+    h += '<div style="background:rgba(240,82,82,.07);border:1px solid rgba(240,82,82,.3);border-radius:8px;padding:11px 14px;margin-bottom:14px">'
+      + '<div style="font-weight:700;color:var(--red);font-size:11px;margin-bottom:7px">🚨 Аварийное производство — добавлено в первый рабочий день из-за низкого остатка:</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:5px">'
+      + emergency.map(e =>
+          '<span style="background:rgba(240,82,82,.1);color:var(--red);padding:3px 9px;border-radius:5px;font-size:10px">'
+          + e.name.substring(0,28) + ' <strong>(склад: '+e.stock+'шт, ~'+e.stockDays+'дн.)</strong>'
+          + '</span>'
+        ).join('')
+      + '</div></div>';
+  }
+
   h+='<div class="sched-grid">';
   for(const d of activeDaysList){
     const items=(plan[d.key]||[]).filter(p=>p.needed>0);
@@ -1778,16 +1846,22 @@ function renderSched(plan,activeDaysList){
       h+=items.map(p=>{
         const ov=(planOverrides[p.code]||{})[d.key];
         const displayQty=ov!==undefined?ov:p.needed;
-        return `<div class="dcrow" style="align-items:center">
-          <div class="dcn" title="${p.name}">${p.name}</div>
+        const isEmerg = p.emergency === true;
+        const stockDaysLeft = daysOfStock(p);
+        return `<div class="dcrow" style="align-items:center;${isEmerg?'background:rgba(240,82,82,.05);border-radius:4px;':''}">
+          <div class="dcn" title="${p.name}">
+            ${isEmerg?'<span style="color:var(--red);font-size:9px;margin-right:3px" title="Аварийное производство — низкий остаток">🚨</span>':''}
+            ${p.name}
+            ${isEmerg?'<span style="font-size:9px;color:var(--red);display:block">склад: '+p.st+' шт (~'+stockDaysLeft+' дн.)</span>':''}
+          </div>
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" min="0"
               value="${displayQty}"
-              style="width:56px;background:var(--bg3);border:1px solid ${ov!==undefined?'var(--orange)':'var(--border)'};border-radius:5px;
-                     padding:3px 5px;color:${ov!==undefined?'var(--orange)':'var(--text)'};
+              style="width:56px;background:var(--bg3);border:1px solid ${ov!==undefined?'var(--orange)':isEmerg?'var(--red)':'var(--border)'};border-radius:5px;
+                     padding:3px 5px;color:${ov!==undefined?'var(--orange)':isEmerg?'var(--red)':'var(--text)'};
                      font-family:'JetBrains Mono',monospace;font-size:12px;text-align:center;outline:none"
               onchange="setPlanOverride('${p.code}','${d.key}',this.value)"
-              title="${ov!==undefined?'Изменено вручную (оригинал: '+p.needed+')':'Нажмите чтобы изменить'}">
+              title="${isEmerg?'⚠️ Аварийное производство — остаток заканчивается':ov!==undefined?'Изменено вручную (оригинал: '+p.needed+')':'Нажмите чтобы изменить'}">
             ${ov!==undefined?`<span title="Сбросить" onclick="clearOverride('${p.code}','${d.key}')"
               style="cursor:pointer;color:var(--text3);font-size:11px;padding:2px 4px;border-radius:3px;border:1px solid var(--border)"
               onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">↺</span>`:''}

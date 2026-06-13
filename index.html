@@ -1483,10 +1483,10 @@ function renderDash(){
   const needs=calcNeeds();
   const totalOrder=needs.reduce((s,p)=>s+p.total,0);
   const totalProd=needs.reduce((s,p)=>s+p.needed,0);
-  const zeroStock=needs.filter(p=>p.st===0&&p.total>0).length;
-  const lowStock=needs.filter(p=>p.st>0&&p.st<20&&p.total>0).length;
+  const zeroStock=needs.filter(p=>p.st===0&&p.orderTotal>0).length;
+  const lowStock=needs.filter(p=>p.st>0&&p.st<20&&p.orderTotal>0).length;
   const catTotals={};
-  needs.forEach(p=>{catTotals[p.cat]=(catTotals[p.cat]||0)+p.total;});
+  needs.forEach(p=>{catTotals[p.cat]=(catTotals[p.cat]||0)+p.orderTotal;});
   const srcTotals={};
   SOURCES.forEach(s=>{
     srcTotals[s.key]=PRODUCTS.reduce((sum,p)=>sum+(Number((orders[p.code]||{})[s.key])||0),0);
@@ -1516,10 +1516,10 @@ function renderDash(){
   </div>`;
 
   if(zeroStock>0){
-    const zeros=needs.filter(p=>p.st===0&&p.total>0);
+    const zeros=needs.filter(p=>p.st===0&&p.orderTotal>0);
     html+=`<div style="background:rgba(240,82,82,.07);border:1px solid rgba(240,82,82,.25);border-radius:9px;padding:12px 14px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:800;color:var(--red);margin-bottom:7px">⚠️ Критично — нет остатка на складе:</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">${zeros.map(p=>`<span class="bdg b-re">${p.name.substring(0,30)}… (заказ ${p.total})</span>`).join('')}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${zeros.map(p=>`<span class="bdg b-re">${p.name.substring(0,30)}… (заказ ${p.orderTotal||0})</span>`).join('')}</div>
     </div>`;
   }
 
@@ -1530,7 +1530,7 @@ function renderDash(){
       <tbody>${needs.filter(p=>p.needed>0).sort((a,b)=>b.needed-a.needed).slice(0,10).map(p=>`
         <tr><td><div class="pn">${p.name}</div></td>
         <td style="text-align:center"><span class="mpill" style="background:${CC[p.cat]||'#8a93b0'}22;color:${CC[p.cat]||'#8a93b0'}">${p.cat}</span></td>
-        <td style="text-align:center"><span class="bdg b-bl">${p.total}</span></td>
+        <td style="text-align:center"><span class="bdg b-bl">${p.orderTotal||'—'}</span></td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.st<15?'var(--red)':'var(--text2)'}">${p.st}</td>
         <td style="text-align:center"><span class="bdg b-gr">${p.needed}</span></td></tr>`).join('')}
       </tbody></table></div></div>`;
@@ -1588,12 +1588,12 @@ function runABCXYZ(){
   const totals=PRODUCTS.map(p=>{
     const arr=weeklyData[p.code]||[0];
     return {code:p.code,name:p.name,cat:p.cat,total:arr.reduce((s,v)=>s+v,0),avg:arr.reduce((s,v)=>s+v,0)/arr.length};
-  }).sort((a,b)=>b.total-a.total);
+  }).sort((a,b)=>(b.orderTotal||0)-(a.orderTotal||0));
 
   const grandTotal=totals.reduce((s,p)=>s+p.total,0)||1;
   let cum=0;
   totals.forEach(p=>{
-    cum+=p.total;
+    cum+=(p.orderTotal||0);
     p.cumPct=cum/grandTotal*100;
     p.abc=p.cumPct<=80?'A':p.cumPct<=95?'B':'C';
   });
@@ -1694,7 +1694,7 @@ function renderABCLayout(totals,matrix,area,recoHtml){
     <td><span class="mpill" style="background:${CC[p.cat]||'#8a93b0'}22;color:${CC[p.cat]||'#8a93b0'}">${p.cat}</span></td>
     <td style="text-align:center"><span class="bdg" style="background:${p.abc==='A'?'rgba(45,217,143,.12)':p.abc==='B'?'rgba(79,142,247,.1)':'rgba(240,82,82,.1)'}; color:${p.abc==='A'?'var(--green)':p.abc==='B'?'var(--accent)':'var(--red)'}">${p.abc}</span></td>
     <td style="text-align:center"><span class="bdg" style="background:${p.xyz==='X'?'rgba(45,217,143,.1)':p.xyz==='Y'?'rgba(251,191,36,.1)':'rgba(240,82,82,.1)'}; color:${p.xyz==='X'?'var(--green)':p.xyz==='Y'?'var(--yellow)':'var(--red)'}">${p.xyz}</span></td>
-    <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px">${Math.round(p.total)}</td>
+    <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px">${Math.round(p.orderTotal||0)}</td>
     <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text2)">${Math.round(p.avg)}</td>
     <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.cv>50?'var(--red)':p.cv>25?'var(--orange)':'var(--green)'}">${p.cv===999?'—':Math.round(p.cv)+'%'}</td>
     </tr>`).join('');
@@ -3644,7 +3644,8 @@ function addSKU(){
   // Clear form
   document.getElementById('skuCode').value = '';
   document.getElementById('skuName').value = '';
-  document.getElementById('skuBaseSales').value = '';
+  const bsEl = document.getElementById('skuBaseSales');
+  if(bsEl) bsEl.value = '';
 
   renderExtraList();
   toast(`✅ Добавлен: ${name}`);

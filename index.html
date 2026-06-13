@@ -575,7 +575,7 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
         </div>
 
       </div>
-      <button class="btn-prim" onclick="addSKU()" style="width:100%;justify-content:center"><span class="btxt">➕ Добавить товар</span></button>
+      <button type="button" onclick="addSKU()" style="width:100%;padding:9px;border-radius:7px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:12px;font-weight:700;cursor:pointer;font-family:Manrope,sans-serif">➕ Добавить товар</button>
     </div>
 
     <!-- Custom products list -->
@@ -674,6 +674,26 @@ const PRODUCTS = [
   {code:'12351',name:'Сырники замороженные 180 гр',cat:'Творог',group:'Сырники/выпечка'},
   {code:'100284',name:'Сырники без глютена 180 гр',cat:'Творог',group:'Сырники/выпечка'},
   {code:'100219',name:'Family Plate Блинчики с творогом 4шт',cat:'Творог',group:'Family Plate'},
+  {code:'100187',name:'Family plate Чучвара из телятины и баранины 500 гр',cat:'Телятина',group:'Family Plate'},
+  {code:'100191',name:'Цветная овощная лапша 100 гр',cat:'Овощи',group:'Другое'},
+  {code:'100192',name:'Family plate Голубцы домашние 12 шт',cat:'Телятина',group:'Family Plate'},
+  {code:'100382',name:'Family plate Долма 12 шт',cat:'Телятина',group:'Family Plate'},
+  {code:'100458',name:'Family plate Манты мясо картошка 12 шт',cat:'Телятина',group:'Family Plate'},
+  {code:'100743',name:'Творог 350гр',cat:'Творог',group:'Сырники/выпечка'},
+  {code:'101172',name:'Family Plate Пирог Курник 700 гр',cat:'Курица',group:'Family Plate'},
+  {code:'101375',name:'Family plate Телятина фрикадельки, 30 шт 300 гр',cat:'Телятина',group:'Family Plate'},
+  {code:'101376',name:'Family plate Телятина тефтели, 12 шт 420 гр',cat:'Телятина',group:'Family Plate'},
+  {code:'101584',name:'Вафли Kids Plate, 130 гр 2 шт',cat:'Другое',group:'Сырники/выпечка'},
+  {code:'101915',name:'Kids Plate Сосиски детские 100 гр',cat:'Курица',group:'Котлеты/тефтели/фрикадельки'},
+  {code:'101916',name:'Kids Plate Сосиски детские 200 гр',cat:'Курица',group:'Котлеты/тефтели/фрикадельки'},
+  {code:'101980',name:'Вафли без глютена ПП 2 шт, 130 гр',cat:'Другое',group:'Сырники/выпечка'},
+  {code:'10416',name:'Kids Plate печенье слив с миндалём, 150 гр',cat:'Другое',group:'Сырники/выпечка'},
+  {code:'10612',name:'Фрикадельки из судака, 100гр',cat:'Лосось',group:'Котлеты/тефтели/фрикадельки'},
+  {code:'11607',name:'Тушенка из филе телятины, 250гр',cat:'Телятина',group:'Другое'},
+  {code:'147',name:'Family Plate Пирог мясной замороженный',cat:'Телятина',group:'Family Plate'},
+  {code:'3162',name:'Котлеты из судака 2шт, 90гр',cat:'Лосось',group:'Котлеты/тефтели/фрикадельки'},
+  {code:'100459',name:'Family plate лаваш с моцареллой и зеленью 10 шт, 210 гр',cat:'Брынза',group:'Family Plate'},
+  {code:'10500',name:'Лаваш с брынзой 14 шт 250 гр',cat:'Брынза',group:'Family Plate'},
 ];
 
 // Helper: always use this instead of PRODUCTS directly — includes user-added SKUs
@@ -3623,32 +3643,42 @@ function populateStopSelect(){
 }
 
 function addSKU(){
-  const code = document.getElementById('skuCode').value.trim();
-  const name = document.getElementById('skuName').value.trim();
-  const cat  = document.getElementById('skuCat').value;
-  const group= document.getElementById('skuGroup').value;
+  try {
+    const codeEl = document.getElementById('skuCode');
+    const nameEl = document.getElementById('skuName');
+    const catEl  = document.getElementById('skuCat');
+    const groupEl= document.getElementById('skuGroup');
 
-  if(!code){ toast('Введите код товара','warn'); return; }
-  if(!name){ toast('Введите название товара','warn'); return; }
+    if(!codeEl||!nameEl||!catEl||!groupEl){ toast('Ошибка формы','err'); return; }
 
-  // Check duplicate
-  if(allProducts().find(p => p.code === code)){
-    toast('Товар с таким кодом уже существует','warn'); return;
+    const code = codeEl.value.trim();
+    const name = nameEl.value.trim();
+    const cat  = catEl.value;
+    const group= groupEl.value;
+
+    if(!code){ toast('Введите код товара','warn'); return; }
+    if(!name){ toast('Введите название товара','warn'); return; }
+
+    if(allProducts().find(p => p.code === code)){
+      toast('Товар с таким кодом уже существует','warn'); return;
+    }
+
+    const newProduct = { code, name, cat, group, _custom: true };
+    extraProducts.push(newProduct);
+    localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
+    try { syncSettingToDB('kp_extra_products', extraProducts); } catch(e){}
+
+    // Clear form
+    codeEl.value = '';
+    nameEl.value = '';
+
+    renderExtraList();
+    populateStopSelect();
+    toast('✅ Добавлен: ' + name);
+  } catch(err) {
+    console.error('addSKU error:', err);
+    toast('Ошибка: ' + err.message, 'err');
   }
-
-  const newProduct = { code, name, cat, group, _custom: true };
-  extraProducts.push(newProduct);
-  localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
-
-
-  // Clear form
-  document.getElementById('skuCode').value = '';
-  document.getElementById('skuName').value = '';
-  const bsEl = document.getElementById('skuBaseSales');
-  if(bsEl) bsEl.value = '';
-
-  renderExtraList();
-  toast(`✅ Добавлен: ${name}`);
 }
 
 function deleteSKU(code){

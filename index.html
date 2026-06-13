@@ -386,9 +386,10 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
     <div id="tab-schedule" class="tab-content">
       <div class="toolbar">
         <span style="font-size:11px;color:var(--text2)">Распределение по дням</span>
-        <span style="font-size:10px;color:var(--text3)" id="overrideBadge"></span>
+        <span style="font-size:10px;color:var(--orange)" id="overrideBadge"></span>
         <div style="display:flex;gap:6px;margin-left:auto">
-          <button class="btn-out" style="color:var(--orange);border-color:rgba(247,147,79,.3)" onclick="clearAllOverrides()" id="clearOverridesBtn" title="Сбросить все ручные правки">↺ Сбросить правки</button>
+          <button class="btn-save" onclick="saveSchedOverrides()" style="border-color:rgba(45,217,143,.4);color:var(--green);background:rgba(45,217,143,.08)">💾 Сохранить правки</button>
+          <button class="btn-out" style="color:var(--orange);border-color:rgba(247,147,79,.3)" onclick="clearAllOverrides()">↺ Сбросить</button>
           <button class="btn-out" style="color:#1d6f42;border-color:rgba(29,111,66,.4)" onclick="exportSchedXLSX()">⬇ Excel</button>
           <button class="btn-out" style="color:#c0392b;border-color:rgba(192,57,43,.4)" onclick="exportSchedPDF()">⬇ PDF</button>
         </div>
@@ -2218,7 +2219,14 @@ function renderSched(plan,activeDaysList){
         const ov=(planOverrides[p.code]||{})[d.key];
         return s+(ov!==undefined?ov:p.needed);
       },0);
-      h+=`<div class="dcard-foot"><span>${items.length} поз.</span><span style="color:var(--green)">${totalDisplay} ед.</span></div>`;
+      h+=`<div class="dcard-foot"><span>${items.length} поз.</span><span style="color:var(--green)">${totalDisplay} ед.</span></div>
+      <div style="margin-top:6px;display:flex;gap:4px">
+        <select id="addsel-${d.key}" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:10px;padding:3px 5px;outline:none">
+          <option value="">+ добавить позицию...</option>
+          ${allProducts().filter(p=>!items.find(x=>x.code===p.code)).map(p=>`<option value="${p.code}">${p.name.substring(0,40)}</option>`).join('')}
+        </select>
+        <button onclick="addItemToDay('${d.key}')" style="background:var(--green);border:none;color:#fff;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:12px">+</button>
+      </div>`;
     }
     h+='</div>';
   }
@@ -2836,100 +2844,65 @@ function buildSchedPrintHTML(){
   const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
   const week = getWeekLabel();
   const sched = getMeatSchedule();
-  const allNeeded = calcNeeds().filter(p=>p.needed>0);
-  const groups = [...new Set(allNeeded.map(p=>p.group))];
-  const dayColors = {mon:'#e67e22',tue:'#e74c3c',wed:'#27ae60',thu:'#16a085',fri:'#777',sat:'#777'};
+  const dayColors = {mon:'#e67e22',tue:'#e74c3c',wed:'#27ae60',thu:'#16a085',fri:'#7c3aed',sat:'#555'};
 
-  // ── Part 1: Full summary table ──
-  const dayHeaders = activeDaysList.map(d=>{
-    const cats = (sched[d.key]||[]);
-    return '<th style="text-align:center;min-width:48px;background:#1a2035;color:#fff">'+d.name+'<br><span style="font-size:7pt;color:#aaa">'+(cats.length?cats.slice(0,2).join('+'):'')+'</span></th>';
-  }).join('');
-
-  let tableRows = '';
-  for(const g of groups){
-    tableRows += '<tr><td colspan="'+(4+activeDaysList.length)+'" style="background:#f0f0f0;font-weight:700;font-size:8pt;text-transform:uppercase;color:#555;padding:4px 8px">'+g+'</td></tr>';
-    for(const p of allNeeded.filter(x=>x.group===g)){
-      const catColor={Индейка:'#e67e22',Курица:'#f39c12',Лосось:'#e74c3c',Кролик:'#27ae60',Телятина:'#8e44ad',Овощи:'#16a085',Творог:'#2980b9'}[p.cat]||'#555';
-      const dayCells = activeDaysList.map(d=>{
-        const inDay = (planResult[d.key]||[]).some(x=>x.code===p.code);
-        return '<td style="text-align:center">'+(inDay?'<strong style="color:#27ae60">'+p.needed+'</strong>':'<span style="color:#ccc">—</span>')+'</td>';
-      }).join('');
-      tableRows += '<tr>'
-        +'<td><span style="font-size:9pt">'+p.name+'</span><br><span style="font-size:7pt;color:'+catColor+'">'+p.cat+'</span></td>'
-        +'<td style="text-align:center;font-size:9pt">'+( p.orderTotal||'—')+'</td>'
-        +'<td style="text-align:center;font-weight:700;color:'+(p.needed>0?'#27ae60':'#ccc')+'">'+( p.needed||'—')+'</td>'
-        +dayCells
-        +'</tr>';
-    }
-  }
-
-  const totalRow = '<tr style="font-weight:700;background:#f9f9f9">'
-    +'<td>ИТОГО</td><td></td>'
-    +'<td style="text-align:center;color:#27ae60">'+allNeeded.reduce((s,p)=>s+p.needed,0)+'</td>'
-    +activeDaysList.map(d=>'<td style="text-align:center;color:#27ae60">'+(planResult[d.key]||[]).reduce((s,p)=>s+p.needed,0)+'</td>').join('')
-    +'</tr>';
-
-  // ── Part 2: Per-day cards (page 2) ──
   const dayCards = activeDaysList.map(d=>{
-    const items = (planResult[d.key]||[]).filter(p=>p.needed>0);
+    const items = (planResult[d.key]||[]).filter(p=>{
+      const ov=(planOverrides[p.code]||{})[d.key];
+      return (ov===undefined?p.needed:ov) > 0;
+    });
     const cats = (sched[d.key]||[]);
     const color = dayColors[d.key]||'#333';
-    const rows2 = items.length
-      ? items.map((p,i)=>'<tr style="background:'+(i%2?'#fafafa':'#fff')+'">'
-          +'<td style="padding:5px 8px">'+p.name+'</td>'
-          +'<td style="text-align:center;padding:5px 8px;color:#888">'+p.cat+'</td>'
-          +'<td style="text-align:center;padding:5px 8px">'+( p.orderTotal||'—')+'</td>'
-          +'<td style="text-align:right;padding:5px 8px;font-weight:700;color:#27ae60">'+p.needed+'</td>'
-          +'</tr>').join('')
-      : '<tr><td colspan="4" style="color:#aaa;font-style:italic;padding:8px">Нет позиций</td></tr>';
-    const total = items.reduce((s,p)=>s+p.needed,0);
-    return '<div style="break-inside:avoid;margin-bottom:20px;border:1px solid #ddd;border-radius:6px;overflow:hidden">'
-      +'<div style="background:'+color+';color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">'
-      +'<strong style="font-size:11pt">'+d.full+'</strong>'
-      +'<span style="font-size:9pt;opacity:.85">'+(cats.length?cats.join(', '):'')+'</span>'
+    const total = items.reduce((s,p)=>{
+      const ov=(planOverrides[p.code]||{})[d.key];
+      return s+(ov!==undefined?ov:p.needed);
+    },0);
+
+    const rows = items.map((p,i)=>{
+      const ov=(planOverrides[p.code]||{})[d.key];
+      const qty = ov!==undefined?ov:p.needed;
+      return '<tr style="background:'+(i%2?'#f9f9f9':'#fff')+'">'
+        +'<td style="padding:3px 6px;font-size:8pt">'+p.name+'</td>'
+        +'<td style="text-align:right;padding:3px 6px;font-size:8pt;font-weight:700;color:#27ae60;white-space:nowrap">'+qty+'</td>'
+        +'</tr>';
+    }).join('');
+
+    return '<div style="break-inside:avoid;border:1px solid #ddd;border-radius:5px;overflow:hidden;margin-bottom:8px">'
+      +'<div style="background:'+color+';color:#fff;padding:5px 8px;display:flex;justify-content:space-between;align-items:center">'
+      +'<strong style="font-size:10pt">'+d.full+'</strong>'
+      +'<span style="font-size:8pt;opacity:.85">'+cats.join(', ')+'</span>'
+      +'<span style="font-size:9pt;font-weight:700">'+total+' ед.</span>'
       +'</div>'
-      +'<table style="width:100%;border-collapse:collapse;font-size:9pt">'
-      +'<thead><tr style="background:#f5f5f5"><th style="text-align:left;padding:5px 8px">Продукт</th>'
-      +'<th style="text-align:center;padding:5px 8px">Кат.</th>'
-      +'<th style="text-align:center;padding:5px 8px">Заявки</th>'
-      +'<th style="text-align:right;padding:5px 8px">К пр-ву</th></tr></thead>'
-      +'<tbody>'+rows2+'</tbody>'
-      +(items.length?'<tfoot><tr style="border-top:2px solid #ddd;background:#f9f9f9"><td colspan="3" style="padding:5px 8px;font-weight:700">Итого: '+items.length+' позиций</td><td style="text-align:right;padding:5px 8px;font-weight:800;color:#27ae60">'+total+' шт</td></tr></tfoot>':'')
-      +'</table></div>';
+      +(items.length
+        ?'<table style="width:100%;border-collapse:collapse"><tbody>'+rows+'</tbody>'
+         +'<tfoot><tr style="border-top:1px solid #ddd;background:#f0f0f0">'
+         +'<td style="padding:3px 6px;font-size:8pt;font-weight:700">Итого: '+items.length+' позиций</td>'
+         +'<td style="text-align:right;padding:3px 6px;font-size:9pt;font-weight:800;color:#27ae60">'+total+'</td>'
+         +'</tr></tfoot></table>'
+        :'<div style="padding:6px 8px;font-size:8pt;color:#aaa;font-style:italic">Нет позиций</div>')
+      +'</div>';
   }).join('');
+
+  // Calculate columns based on number of active days
+  const cols = activeDaysList.length <= 3 ? activeDaysList.length : Math.ceil(activeDaysList.length/2);
 
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>План '+week+'</title>'
     +'<style>'
-    +'body{font-family:Arial,sans-serif;font-size:10pt;color:#222;margin:15px}'
-    +'h1{font-size:13pt;margin:0 0 3px}'
-    +'.sub{font-size:8pt;color:#666;margin-bottom:12px}'
-    +'table{width:100%;border-collapse:collapse}'
-    +'th{background:#1a2035;color:#fff;padding:6px 7px;text-align:left;font-size:8pt}'
-    +'td{padding:5px 7px;border-bottom:1px solid #eee;vertical-align:middle}'
-    +'.page-break{page-break-before:always;margin-top:20px}'
-    +'@page{margin:12mm;size:A4 landscape}'
-    +'@media print{.page-break{page-break-before:always}}'
+    +'*{margin:0;padding:0;box-sizing:border-box}'
+    +'body{font-family:Arial,sans-serif;font-size:9pt;color:#222;padding:8mm}'
+    +'h1{font-size:12pt;margin-bottom:2px}'
+    +'.sub{font-size:8pt;color:#666;margin-bottom:8px}'
+    +'.grid{display:grid;grid-template-columns:repeat('+cols+',1fr);gap:8px}'
+    +'@page{margin:8mm;size:A4 landscape}'
+    +'@media print{body{padding:0}}'
     +'</style></head><body>'
     +'<h1>📋 Производственный план — '+week+'</h1>'
-    +'<div class="sub">Сформирован: '+ts()+' &nbsp;·&nbsp; '+( currentUser||'—')+'</div>'
-    +'<table><thead><tr>'
-    +'<th style="min-width:180px">Продукт</th>'
-    +'<th style="text-align:center">Заявки</th>'
-    +'<th style="text-align:center">К пр-ву</th>'
-    +dayHeaders
-    +'</tr></thead><tbody>'+tableRows+totalRow+'</tbody></table>'
-    +'<div class="page-break">'
-    +'<h1>🗓️ Расписание по дням — '+week+'</h1>'
-    +'<div class="sub">Каждый день производства — отдельный блок</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px">'+dayCards+'</div>'
-    +'</div>'
+    +'<div class="sub">'+ts()+' · '+( currentUser||'—')+(Object.keys(planOverrides).length?' · ⚡ включает ручные правки':' ')+'</div>'
+    +'<div class="grid">'+dayCards+'</div>'
     +'</body></html>';
 }
 
-// ═══════════════════════════════════════════════════════
-//  PLANNING MODE
-// ═══════════════════════════════════════════════════════
+
 function setPlanMode(mode){
   planMode=mode;
   localStorage.setItem('kp_plan_mode',mode);
@@ -3838,6 +3811,69 @@ function migrateMeatSchedule(){
     try { syncSettingToDB('kp_meat_schedule', sched); } catch(e){}
     console.log('✅ Meat schedule migrated — added missing categories');
   }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  ADD / REMOVE ITEMS IN DAY CARDS
+// ═══════════════════════════════════════════════════════
+function addItemToDay(dayKey){
+  const sel = document.getElementById('addsel-'+dayKey);
+  if(!sel||!sel.value){ toast('Выберите позицию','warn'); return; }
+  const code = sel.value;
+  const prod = allProducts().find(p=>p.code===code);
+  if(!prod){ toast('Товар не найден','err'); return; }
+
+  // Add to planResult
+  if(!planResult) planResult = {};
+  if(!planResult[dayKey]) planResult[dayKey] = [];
+  if(planResult[dayKey].find(p=>p.code===code)){
+    toast('Позиция уже есть в этом дне','warn'); return;
+  }
+  const qty = planOverrides[code]?.[dayKey] || prod.needed || 1;
+  planResult[dayKey].push({...prod, needed: qty, _manual: true});
+
+  // Save as override
+  if(!planOverrides[code]) planOverrides[code] = {};
+  planOverrides[code][dayKey] = qty;
+  localStorage.setItem('kp_plan_overrides', JSON.stringify(planOverrides));
+
+  const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+  renderSched(planResult, activeDaysList);
+  toast('✅ '+prod.name.substring(0,25)+' добавлен в '+DAYS.find(d=>d.key===dayKey)?.name);
+}
+
+function removeItemFromDay(code, dayKey){
+  if(!planResult||!planResult[dayKey]) return;
+  planResult[dayKey] = planResult[dayKey].filter(p=>p.code!==code);
+
+  // Mark as removed in overrides (qty=0)
+  if(!planOverrides[code]) planOverrides[code] = {};
+  planOverrides[code][dayKey] = 0;
+  localStorage.setItem('kp_plan_overrides', JSON.stringify(planOverrides));
+
+  const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+  renderSched(planResult, activeDaysList);
+  toast('Убрано из плана');
+}
+
+function saveSchedOverrides(){
+  localStorage.setItem('kp_plan_overrides', JSON.stringify(planOverrides));
+  // Sync plan state snapshot
+  if(planResult){
+    const snapshot = {};
+    DAYS.forEach(d=>{
+      if(planResult[d.key]){
+        snapshot[d.key] = planResult[d.key].map(p=>({
+          code:p.code, needed:(planOverrides[p.code]||{})[d.key]??p.needed
+        }));
+      }
+    });
+    localStorage.setItem('kp_plan_snapshot', JSON.stringify(snapshot));
+    try{ syncSettingToDB('kp_plan_snapshot', snapshot); }catch(e){}
+  }
+  const cnt = Object.values(planOverrides).reduce((s,d)=>s+Object.keys(d).filter(k=>d[k]>0).length,0);
+  toast('✅ Правки сохранены ('+cnt+' позиций)');
 }
 
 // ═══════════════════════════════════════════════════════

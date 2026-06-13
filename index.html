@@ -178,6 +178,12 @@ header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20p
 .dcn{font-size:10px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:6px}
 .dcq{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--green)}
 .dcard-foot{margin-top:7px;font-size:9px;color:var(--text3);display:flex;justify-content:space-between}
+.dcrow.dragging{opacity:.4;background:rgba(79,142,247,.1)!important}
+.dcard.drag-over{border:2px dashed var(--accent)!important;background:rgba(79,142,247,.05)!important}
+.dcrow[draggable]{cursor:grab}
+.dcrow[draggable]:active{cursor:grabbing}
+.drag-handle{color:var(--text3);font-size:12px;cursor:grab;padding:0 4px;user-select:none;flex-shrink:0}
+.drag-handle:hover{color:var(--text2)}
 
 /* Modal */
 .moverlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:500;backdrop-filter:blur(5px)}
@@ -622,6 +628,17 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
     <input type="file" id="salesFile" accept=".xlsx" style="display:none" onchange="handleSalesFile(this.files[0])">
     <div class="ilog" id="slog" style="display:none"></div>
     <div id="salesPreview" style="display:none;margin-top:10px"></div>
+    <!-- New products found in file -->
+    <div id="newProductsPanel" style="display:none;margin-top:10px;background:rgba(79,142,247,.07);border:1px solid rgba(79,142,247,.25);border-radius:8px;padding:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <strong style="font-size:11px;color:var(--accent)">🆕 Новые товары в файле — не найдены в базе</strong>
+        <div style="display:flex;gap:6px">
+          <button onclick="addAllNewProducts()" style="background:var(--accent);border:none;color:#fff;padding:4px 10px;border-radius:5px;font-size:10px;cursor:pointer;font-family:Manrope,sans-serif">➕ Добавить все</button>
+          <button onclick="document.getElementById('newProductsPanel').style.display='none'" style="background:none;border:1px solid var(--border);color:var(--text3);padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer">✕</button>
+        </div>
+      </div>
+      <div id="newProductsList" style="max-height:200px;overflow-y:auto"></div>
+    </div>
     <div class="mbrow" style="margin-top:12px">
       <button class="btn-save" id="applySalesBtn" onclick="applySalesImport()" style="display:none;flex:1">✅ Добавить в историю прогноза</button>
       <button class="btn-out" onclick="closeModal('salesModal')">Закрыть</button>
@@ -692,6 +709,7 @@ const PRODUCTS = [
   {code:'11607',name:'Тушенка из филе телятины, 250гр',cat:'Телятина',group:'Другое'},
   {code:'147',name:'Family Plate Пирог мясной замороженный',cat:'Телятина',group:'Family Plate'},
   {code:'3162',name:'Котлеты из судака 2шт, 90гр',cat:'Лосось',group:'Котлеты/тефтели/фрикадельки'},
+  {code:'4178',name:'Лапша домашняя, кг',cat:'Овощи',group:'Другое'},
   {code:'100459',name:'Family plate лаваш с моцареллой и зеленью 10 шт, 210 гр',cat:'Брынза',group:'Family Plate'},
   {code:'10500',name:'Лаваш с брынзой 14 шт 250 гр',cat:'Брынза',group:'Family Plate'},
 ];
@@ -1501,7 +1519,7 @@ function buildMissedSalesSection(){
 function renderDash(){
   const area=document.getElementById('dashArea');
   const needs=calcNeeds();
-  const totalOrder=needs.reduce((s,p)=>s+p.total,0);
+  const totalOrder=needs.reduce((s,p)=>s+(p.orderTotal||0),0);
   const totalProd=needs.reduce((s,p)=>s+p.needed,0);
   const zeroStock=needs.filter(p=>p.st===0&&p.orderTotal>0).length;
   const lowStock=needs.filter(p=>p.st>0&&p.st<20&&p.orderTotal>0).length;
@@ -1608,12 +1626,12 @@ function runABCXYZ(){
   const totals=PRODUCTS.map(p=>{
     const arr=weeklyData[p.code]||[0];
     return {code:p.code,name:p.name,cat:p.cat,total:arr.reduce((s,v)=>s+v,0),avg:arr.reduce((s,v)=>s+v,0)/arr.length};
-  }).sort((a,b)=>(b.orderTotal||0)-(a.orderTotal||0));
+  }).sort((a,b)=>b.total-a.total);
 
   const grandTotal=totals.reduce((s,p)=>s+p.total,0)||1;
   let cum=0;
   totals.forEach(p=>{
-    cum+=(p.orderTotal||0);
+    cum+=p.total;
     p.cumPct=cum/grandTotal*100;
     p.abc=p.cumPct<=80?'A':p.cumPct<=95?'B':'C';
   });
@@ -2124,7 +2142,10 @@ function renderSched(plan,activeDaysList){
   for(const d of activeDaysList){
     const items=(plan[d.key]||[]).filter(p=>p.needed>0);
     const cats=(getMeatSchedule()[d.key]||[]);
-    h+=`<div class="dcard" style="border-top-color:${d.color}">
+    h+=`<div class="dcard" data-day="${d.key}" style="border-top-color:${d.color}"
+      ondragover="onDragOverDay(event)"
+      ondragleave="onDragLeaveDay(event)"
+      ondrop="onDropDay(event,'${d.key}')">
       <div class="dcard-head">
         <span class="dcard-title">${d.full}</span>
         <span class="mpill" style="background:${d.color}22;color:${d.color};font-size:9px">${cats.join(', ')||'—'}</span>
@@ -2138,9 +2159,14 @@ function renderSched(plan,activeDaysList){
         const displayQty=ov!==undefined?ov:p.needed;
         const isEmerg = p.emergency === true;
         const stockDaysLeft = daysOfStock(p);
-        return `<div class="dcrow" style="align-items:center;${isEmerg?'background:rgba(240,82,82,.05);border-radius:4px;':''}">
-          <div class="dcn" title="${p.name}">
-            ${isEmerg?'<span style="color:var(--red);font-size:9px;margin-right:3px" title="Аварийное производство — низкий остаток">🚨</span>':''}
+        return `<div class="dcrow" draggable="true"
+          data-code="${p.code}" data-from="${d.key}" data-qty="${displayQty}"
+          style="align-items:center;${isEmerg?'background:rgba(240,82,82,.05);border-radius:4px;':''}"
+          ondragstart="onDragStartItem(event)"
+          ondragend="onDragEndItem(event)">
+          <span class="drag-handle" title="Перетащить в другой день">⠿</span>
+          <div class="dcn" title="${p.name}" style="flex:1">
+            ${isEmerg?'<span style="color:var(--red);font-size:9px;margin-right:3px">🚨</span>':''}
             ${p.name}
             ${isEmerg?'<span style="font-size:9px;color:var(--red);display:block">склад: '+p.st+' шт (~'+stockDaysLeft+' дн.)</span>':''}
           </div>
@@ -3048,7 +3074,29 @@ function parse1CSales(rows, filename){
   // Show preview table
   showSalesPreview(finalData, dateCols, byCodeByDay);
 
-  pendingSalesImport={data:finalData, byDay:byCodeByDay, dateCols, file:filename||'1c_file.xlsx', ts:ts(), format:'1c'};
+  // Detect new products not in app
+  const knownCodes = new Set(allProducts().map(p=>p.code));
+  pendingSalesImport={
+    data:finalData, byDay:byCodeByDay, dateCols,
+    file:filename||'1c_file.xlsx', ts:ts(), format:'1c',
+    allCodesFromFile: Object.keys(finalData)
+  };
+
+  // Find unknown codes with their names from the file
+  const newProds = [];
+  for(let i=dataStart; i<rows.length-1; i++){
+    const row = rows[i];
+    const art = String(row[artCol]||'').trim();
+    const name = String(row[0]||'').trim();
+    if(art && /^\d+$/.test(art) && name && !knownCodes.has(art) && finalData[art]>0){
+      if(!newProds.find(p=>p.code===art)){
+        newProds.push({code:art, name, sales:finalData[art]});
+      }
+    }
+  }
+  pendingSalesImport.newProds = newProds;
+  showNewProductsPanel(newProds);
+
   document.getElementById('applySalesBtn').style.display='flex';
 }
 
@@ -3410,6 +3458,87 @@ function checkUnassignedCats(){
 }
 
 
+
+// ═══════════════════════════════════════════════════════
+//  NEW PRODUCT DETECTION FROM 1C FILE
+// ═══════════════════════════════════════════════════════
+function showNewProductsPanel(newProds){
+  const panel = document.getElementById('newProductsPanel');
+  const list  = document.getElementById('newProductsList');
+  if(!panel||!list) return;
+  if(!newProds||!newProds.length){ panel.style.display='none'; return; }
+
+  slog('🆕 Новых товаров (не в базе): '+newProds.length,'ok');
+
+  list.innerHTML = newProds.map(p => `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(79,142,247,.15)" id="np-${p.code}">
+      <div style="flex:1">
+        <span style="font-size:11px;color:var(--text)">${p.name}</span>
+        <span style="font-size:9px;color:var(--text3);margin-left:6px">арт. ${p.code} · продажи: ${p.sales} шт</span>
+      </div>
+      <select id="ncat-${p.code}" style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:10px;padding:2px 5px;outline:none">
+        <option value="Курица">Курица</option>
+        <option value="Индейка">Индейка</option>
+        <option value="Телятина">Телятина</option>
+        <option value="Кролик">Кролик</option>
+        <option value="Лосось">Лосось</option>
+        <option value="Овощи">Овощи</option>
+        <option value="Творог">Творог</option>
+        <option value="Брынза">Брынза</option>
+        <option value="Другое" selected>Другое</option>
+      </select>
+      <select id="ngrp-${p.code}" style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text2);font-size:10px;padding:2px 5px;outline:none">
+        <option>Котлеты/тефтели/фрикадельки</option>
+        <option>Пельмени/манты/вареники</option>
+        <option selected>Family Plate</option>
+        <option>Сырники/выпечка</option>
+        <option>Другое</option>
+      </select>
+      <button onclick="addSingleNewProduct('${p.code}','${p.name.replace(/'/g,"\\'")}',document.getElementById('ncat-${p.code}').value,document.getElementById('ngrp-${p.code}').value)"
+        style="background:rgba(45,217,143,.1);border:1px solid rgba(45,217,143,.3);color:var(--green);border-radius:4px;padding:3px 8px;font-size:10px;cursor:pointer;white-space:nowrap">
+        ➕
+      </button>
+    </div>`).join('');
+
+  panel.style.display='block';
+}
+
+function addSingleNewProduct(code, name, cat, group){
+  if(allProducts().find(p=>p.code===code)){
+    // Already added
+    const el = document.getElementById('np-'+code);
+    if(el) el.style.opacity='0.4';
+    return;
+  }
+  extraProducts.push({code, name, cat, group, _custom:true});
+  localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
+  try{ syncSettingToDB('kp_extra_products', extraProducts); }catch(e){}
+  // Hide row
+  const el = document.getElementById('np-'+code);
+  if(el){ el.innerHTML='<span style="font-size:10px;color:var(--green)">✅ '+name.substring(0,35)+' добавлен</span>'; }
+  toast('✅ '+name.substring(0,30)+' добавлен в базу');
+}
+
+function addAllNewProducts(){
+  if(!pendingSalesImport?.newProds?.length){ toast('Нет новых товаров','warn'); return; }
+  let count = 0;
+  pendingSalesImport.newProds.forEach(p => {
+    if(allProducts().find(x=>x.code===p.code)) return;
+    const catEl  = document.getElementById('ncat-'+p.code);
+    const grpEl  = document.getElementById('ngrp-'+p.code);
+    const cat    = catEl?.value || 'Другое';
+    const group  = grpEl?.value || 'Другое';
+    extraProducts.push({code:p.code, name:p.name, cat, group, _custom:true});
+    count++;
+  });
+  if(!count){ toast('Все товары уже добавлены','warn'); return; }
+  localStorage.setItem('kp_extra_products', JSON.stringify(extraProducts));
+  try{ syncSettingToDB('kp_extra_products', extraProducts); }catch(e){}
+  document.getElementById('newProductsPanel').style.display='none';
+  toast('✅ Добавлено '+count+' новых товаров в базу');
+  renderExtraList();
+}
+
 // ═══════════════════════════════════════════════════════
 //  SAFETY STOCK SETTINGS — by category
 // ═══════════════════════════════════════════════════════
@@ -3575,6 +3704,86 @@ function resetSafetySettings(){
   toast('Сброшено на значения по умолчанию','warn');
 }
 
+
+// ═══════════════════════════════════════════════════════
+//  DRAG & DROP — перетаскивание позиций между днями
+// ═══════════════════════════════════════════════════════
+let _dragCode = null, _dragFrom = null, _dragQty = 0;
+
+function onDragStartItem(e){
+  const row = e.currentTarget;
+  _dragCode = row.dataset.code;
+  _dragFrom = row.dataset.from;
+  _dragQty  = Number(row.dataset.qty) || 0;
+  row.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', _dragCode);
+}
+
+function onDragEndItem(e){
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.dcard.drag-over').forEach(el=>el.classList.remove('drag-over'));
+}
+
+function onDragOverDay(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const card = e.currentTarget.closest('.dcard') || e.currentTarget;
+  card.classList.add('drag-over');
+}
+
+function onDragLeaveDay(e){
+  const card = e.currentTarget.closest('.dcard') || e.currentTarget;
+  // Only remove if leaving the card entirely
+  if(!card.contains(e.relatedTarget)){
+    card.classList.remove('drag-over');
+  }
+}
+
+function onDropDay(e, targetDay){
+  e.preventDefault();
+  const card = e.currentTarget.closest('.dcard') || e.currentTarget;
+  card.classList.remove('drag-over');
+
+  if(!_dragCode || !_dragFrom || targetDay === _dragFrom) return;
+
+  // Move item: remove from source day, add to target day
+  moveItemToDay(_dragCode, _dragFrom, targetDay, _dragQty);
+  _dragCode = null; _dragFrom = null;
+}
+
+function moveItemToDay(code, fromDay, toDay, qty){
+  if(!planResult) return;
+
+  // Remove from source day
+  if(planResult[fromDay]){
+    planResult[fromDay] = planResult[fromDay].filter(p => p.code !== code);
+  }
+
+  // Add to target day (find the product object)
+  const needs = calcNeeds();
+  const prod = needs.find(p=>p.code===code) || allProducts().find(p=>p.code===code);
+  if(!prod) return;
+
+  if(!planResult[toDay]) planResult[toDay] = [];
+  // Avoid duplicate
+  if(!planResult[toDay].find(p=>p.code===code)){
+    planResult[toDay].push({...prod, needed: qty||prod.needed||0});
+  }
+
+  // Save as override — new day assignment
+  if(!planOverrides[code]) planOverrides[code] = {};
+  planOverrides[code][toDay] = qty || prod.needed || 0;
+  // Clear old day override
+  if(planOverrides[code][fromDay] !== undefined) delete planOverrides[code][fromDay];
+  localStorage.setItem('kp_plan_overrides', JSON.stringify(planOverrides));
+
+  // Re-render
+  const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
+  renderSched(planResult, activeDaysList);
+  toast('✅ Перенесено в ' + (DAYS.find(d=>d.key===toDay)?.full||toDay));
+}
+
 // ═══════════════════════════════════════════════════════
 //  STOP LIST
 // ═══════════════════════════════════════════════════════
@@ -3590,6 +3799,7 @@ function toggleStop(code){
 }
 
 function renderStopList(){
+  try {
   const el = document.getElementById('stopListArea');
   if(!el) return;
   const stopped = allProducts().filter(p => stopList.has(p.code));
@@ -3605,11 +3815,8 @@ function renderStopList(){
       <button onclick="toggleStop('${p.code}')" style="background:rgba(45,217,143,.1);border:1px solid rgba(45,217,143,.3);color:var(--green);border-radius:5px;padding:2px 8px;font-size:10px;cursor:pointer">▶ Возобновить</button>
     </div>`;
   }).join('');
+  } catch(err){ console.error("renderStopList:", err); }
 }
-
-// ═══════════════════════════════════════════════════════
-//  SKU MANAGER
-// ═══════════════════════════════════════════════════════
 function toggleStopSelected(){
   const code = document.getElementById('stopProductSel')?.value;
   if(!code){ toast('Выберите товар','warn'); return; }
@@ -3633,13 +3840,15 @@ function populateStopSelect(){
   const sel = document.getElementById('stopProductSel');
   if(!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">— выберите товар —</option>'
-    + allProducts().map(p => {
-        const stopped = stopList.has(p.code);
-        const label = (stopped?'🛑 ':'') + p.name + ' (' + p.cat + ')';
-        const style = stopped ? 'color:var(--orange)' : '';
-        return `<option value="${p.code}" ${style?`style="${style}"`:''} ${p.code===cur?'selected':''}>${label}</option>`;
-      }).join('');
+  let html = '<option value="">— выберите товар —</option>';
+  allProducts().forEach(p => {
+    const stopped = stopList.has(p.code);
+    const label = (stopped ? '🛑 ' : '') + p.name + ' (' + p.cat + ')';
+    const styleAttr = stopped ? ' style="color:var(--orange)"' : '';
+    const selAttr = p.code === cur ? ' selected' : '';
+    html += '<option value="' + p.code + '"' + styleAttr + selAttr + '>' + label + '</option>';
+  });
+  sel.innerHTML = html;
 }
 
 function addSKU(){
@@ -3690,8 +3899,10 @@ function deleteSKU(code){
 }
 
 function renderExtraList(){
+  try {
   const el = document.getElementById('extraList');
   const cnt = document.getElementById('extraCount');
+  if(!el) return;
   if(cnt) cnt.textContent = extraProducts.length;
   if(!extraProducts.length){
     el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:8px 0;font-style:italic">Нет добавленных товаров</div>';
@@ -3714,11 +3925,9 @@ function renderExtraList(){
       <button onclick="deleteSKU('${p.code}')" style="background:rgba(240,82,82,.1);border:1px solid rgba(240,82,82,.3);color:var(--red);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer">✕</button>
     </div>`;
   }).join('');
+  } catch(err){ console.error("renderExtraList error:", err); }
 }
 
-// ═══════════════════════════════════════════════════════
-//  START
-// ═══════════════════════════════════════════════════════
 init();
 </script>
 </body>

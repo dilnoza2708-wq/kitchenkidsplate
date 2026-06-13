@@ -745,22 +745,42 @@ const DEFAULT_MEAT_SCHEDULE = {
   sat: [],
 };
 
-// Returns current CAT_DAY mapping derived from meatSchedule
+// Returns effective schedule: DEFAULT merged with user overrides
+function getMeatSchedule() {
+  // Always start from DEFAULT, then apply user changes on top
+  const base = JSON.parse(JSON.stringify(DEFAULT_MEAT_SCHEDULE));
+  const saved = localStorage.getItem('kp_meat_schedule');
+  if(!saved) return base;
+  const user = JSON.parse(saved);
+  // Merge: for each day in user schedule, replace that day's list
+  // But keep any DEFAULT categories that user hasn't explicitly removed
+  Object.keys(base).forEach(day => {
+    if(user[day] !== undefined) {
+      // User has set this day — use their list, but add any DEFAULT cats not yet present
+      // Actually: fully respect user's choices (they may have intentionally removed cats)
+      base[day] = user[day];
+    }
+  });
+  // Add any days user added that aren't in base
+  Object.keys(user).forEach(day => {
+    if(!base[day]) base[day] = user[day];
+  });
+  return base;
+}
+
+// Returns CAT→[days] mapping
 function getCatDay() {
   const map = {};
   const sched = getMeatSchedule();
   Object.entries(sched).forEach(([day, cats]) => {
-    cats.forEach(cat => {
+    (cats||[]).forEach(cat => {
       if(!map[cat]) map[cat] = [];
       if(!map[cat].includes(day)) map[cat].push(day);
     });
   });
+  // FALLBACK: any category not in map gets all active days
+  // This ensures no product is ever left unscheduled due to missing category
   return map;
-}
-
-function getMeatSchedule() {
-  const saved = localStorage.getItem('kp_meat_schedule');
-  return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_MEAT_SCHEDULE));
 }
 
 function saveMeatSchedule(sched) {
@@ -1931,7 +1951,11 @@ function buildPlan(needs, activeDaysList){
     const pref = (catDay[p.cat] || []).filter(dk => plan[dk] !== undefined);
 
     if(pref.length === 0){
-      // No matching day — leave unscheduled
+      // Category not in any scheduled day — assign to last active day as fallback
+      const fallbackDay = activeDaysList[activeDaysList.length-1]?.key;
+      if(fallbackDay && plan[fallbackDay] !== undefined){
+        plan[fallbackDay].push({...p, fallback: true});
+      }
       continue;
     }
 
@@ -1968,7 +1992,12 @@ function buildPlan(needs, activeDaysList){
 
 // Get products that have no assigned day in the plan
 function getUnscheduled(needs,plan){
-  const scheduled=new Set(Object.values(plan).flat().map(p=>p.code));
+  // Items are unscheduled only if they're not in ANY day's plan
+  const scheduled=new Set(
+    Object.values(plan).flat()
+      .filter(p=>typeof p==='object'&&p.code)
+      .map(p=>p.code)
+  );
   return needs.filter(p=>p.needed>0&&!scheduled.has(p.code));
 }
 

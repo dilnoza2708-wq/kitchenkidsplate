@@ -1193,6 +1193,7 @@ function init(){
   salesHistory = JSON.parse(localStorage.getItem('kp_sales_hist') || '{}');
   buildABCCache();
   applyTheme();
+  migrateMeatSchedule(); // ensure new categories are added to saved schedule
   document.getElementById('weekSel').value=currentWeek;
   loadOrdersLocal();
   // If no saved schedule — apply smart default based on actual products
@@ -1947,16 +1948,16 @@ function buildPlan(needs, activeDaysList){
     if(isEmergency && activeDaysList.length > 0){
       const firstDay = activeDaysList[0].key;
       if(pref.includes(firstDay)){
-        // First day IS the preferred day — just add normally, no emergency flag needed
-        pref.forEach(dk => plan[dk].push(p));
+        // First day IS already preferred — place only there (no duplicate in other pref days)
+        plan[firstDay].push(p);
       } else {
-        // Add ONLY to first day as emergency — skip normal preferred days to avoid duplicate
+        // Emergency: place only in first active day
         plan[firstDay].push({...p, emergency: true, normalDay: pref[0]});
         emergencyItems.push({name: p.name, cat: p.cat, stock: p.st, stockDays, normalDay: pref[0]});
       }
     } else {
-      // Normal: place in preferred days only
-      pref.forEach(dk => plan[dk].push(p));
+      // Normal: place only in FIRST preferred day (avoid duplicates if category on multiple days)
+      plan[pref[0]].push(p);
     }
   }
 
@@ -3782,6 +3783,30 @@ function moveItemToDay(code, fromDay, toDay, qty){
   const activeDaysList = DAYS.filter(d=>activeDays[d.key]);
   renderSched(planResult, activeDaysList);
   toast('✅ Перенесено в ' + (DAYS.find(d=>d.key===toDay)?.full||toDay));
+}
+
+
+// ── Migrate saved schedule — add any missing default categories ──
+function migrateMeatSchedule(){
+  const saved = localStorage.getItem('kp_meat_schedule');
+  if(!saved) return; // no saved schedule — defaults will be used
+  const sched = JSON.parse(saved);
+  const defaults = DEFAULT_MEAT_SCHEDULE;
+  let changed = false;
+  // For each default day/category, ensure it's present
+  Object.entries(defaults).forEach(([day, cats]) => {
+    if(!sched[day]) { sched[day] = []; }
+    cats.forEach(cat => {
+      if(!sched[day].includes(cat)){
+        sched[day].push(cat);
+        changed = true;
+      }
+    });
+  });
+  if(changed){
+    localStorage.setItem('kp_meat_schedule', JSON.stringify(sched));
+    console.log('✅ Meat schedule migrated — added missing categories');
+  }
 }
 
 // ═══════════════════════════════════════════════════════

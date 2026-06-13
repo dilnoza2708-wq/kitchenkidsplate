@@ -741,7 +741,7 @@ const DEFAULT_MEAT_SCHEDULE = {
   tue: ['Лосось'],
   wed: ['Кролик','Телятина'],
   thu: ['Овощи'],
-  fri: [],
+  fri: ['Творог','Брынза','Другое'],
   sat: [],
 };
 
@@ -3791,20 +3791,22 @@ function migrateMeatSchedule(){
   const saved = localStorage.getItem('kp_meat_schedule');
   if(!saved) return; // no saved schedule — defaults will be used
   const sched = JSON.parse(saved);
-  const defaults = DEFAULT_MEAT_SCHEDULE;
   let changed = false;
   // For each default day/category, ensure it's present
-  Object.entries(defaults).forEach(([day, cats]) => {
+  Object.entries(DEFAULT_MEAT_SCHEDULE).forEach(([day, cats]) => {
     if(!sched[day]) { sched[day] = []; }
     cats.forEach(cat => {
       if(!sched[day].includes(cat)){
         sched[day].push(cat);
         changed = true;
+        console.log('Schedule migration: added', cat, 'to', day);
       }
     });
   });
   if(changed){
     localStorage.setItem('kp_meat_schedule', JSON.stringify(sched));
+    // Also sync to DB so all users get update
+    try { syncSettingToDB('kp_meat_schedule', sched); } catch(e){}
     console.log('✅ Meat schedule migrated — added missing categories');
   }
 }

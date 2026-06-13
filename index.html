@@ -447,7 +447,7 @@ body.light .mode-btn.active{background:#2563eb;color:#fff}
 <!-- MODAL: Safety Settings by Category -->
 <div id="safetyModal" class="moverlay" style="display:none" onclick="co(event,'safetyModal')">
   <div class="modal" style="width:480px;max-height:90vh;overflow-y:auto">
-    <h3>⚙️ Страховой запас % по категориям</h3>
+    <h3>⚙️ Страховой запас % по группам и категориям</h3>
     <p style="font-size:10px;color:var(--text2);margin-bottom:12px;line-height:1.6">
       Настройте страховой запас для каждой категории сырья.<br>
       <strong>Формула:</strong> К пр-ву = Прогноз × (1 + запас%) − Остаток склада
@@ -948,6 +948,8 @@ async function loadAllFromDB(){
           localStorage.setItem('kp_abc_safety', JSON.stringify(val));
         } else if(key === 'kp_cat_safety'){
           localStorage.setItem('kp_cat_safety', JSON.stringify(val));
+        } else if(key === 'kp_group_safety'){
+          localStorage.setItem('kp_group_safety', JSON.stringify(val));
         }
       });
     }
@@ -1738,7 +1740,7 @@ function getForecast(code) {
       let wSum = 0, wTot = 0;
       nonZero.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
       const wma = wTot > 0 ? wSum / wTot : 0;
-      return Math.ceil(wma * 1.1);
+      return Math.round(wma); // clean WMA, buffer added via safety %
     }
   }
 
@@ -1758,7 +1760,7 @@ function getForecast(code) {
     if (nonZero.length > 0) {
       let wSum = 0, wTot = 0;
       nonZero.forEach((v, i) => { const w = i + 1; wSum += v * w; wTot += w; });
-      return Math.ceil((wTot > 0 ? wSum / wTot : 0) * 1.1);
+      return Math.round(wTot > 0 ? wSum / wTot : 0); // clean WMA
     }
   }
 
@@ -2374,18 +2376,8 @@ async function applyImport(){
   localStorage.setItem('kp_stock', JSON.stringify(stock));
   localStorage.setItem('kp_stock_date', stockDate);
 
-  // 2. Append sales (расход) to salesHistory
-  const salesData = pendingImport.sales;
-  let salesAdded = 0;
-  allProducts().forEach(p => {
-    if(!salesHistory[p.code]) salesHistory[p.code] = [];
-    const qty = salesData[p.code] || 0;
-    salesHistory[p.code].push(qty);
-    if(salesHistory[p.code].length > 12) salesHistory[p.code].shift(); // keep 12 weeks
-    if(qty > 0) salesAdded++;
-  });
-  localStorage.setItem('kp_sales_hist', JSON.stringify(salesHistory));
-  updateSalesHistCount();
+  // 2. IIKO = только остатки склада. Продажи загружаются отдельно из 1С.
+  const salesAdded = 0;
 
   // 3. Push stock to Supabase
   if(sb){
@@ -3010,52 +3002,23 @@ function parse1CSales(rows, filename){
     // Менеджерская/клиентская строка — пропускаем, продажи уже учтены в строке товара
   }
 
-  // ── Smart missed sales logic ──
-  // For each product: if it sold stably for N days then suddenly stopped,
-  // fill gaps with the product's own moving average for that day-of-week
+  // ── Calculate actual totals (no inflation — upущенные продажи только для дашборда) ──
   const productCodes = Object.keys(byCodeByDay);
-  const adjustedTotals = {};
-  let totalAdjusted = 0;
-
-  productCodes.forEach(code => {
-    const dayData = byCodeByDay[code]; // { "01.06.2026": qty, ... }
-    const dates = dateCols.map(d=>d.date);
-    const qtys = dates.map(d=>dayData[d]||0);
-
-    // Calculate average of non-zero days
-    const nonZero = qtys.filter(v=>v>0);
-    if(!nonZero.length){ adjustedTotals[code]=0; return; }
-
-    const avg = nonZero.reduce((s,v)=>s+v,0)/nonZero.length;
-    const totalDays = dates.length;
-    const zeroDays = qtys.filter(v=>v===0).length;
-    const zeroRatio = zeroDays/totalDays;
-
-    // If >40% of days are zero AND product sold on other days → suspect stockout
-    // Fill zeros with 50% of average (conservative estimate for missed sales)
-    let adjustedTotal = qtys.reduce((s,v)=>s+v,0);
-    if(zeroRatio>0.4 && nonZero.length>=2){
-      const missedEstimate = Math.round(zeroDays * avg * 0.5);
-      adjustedTotal += missedEstimate;
-      totalAdjusted++;
-    }
-
-    adjustedTotals[code] = Math.round(adjustedTotal);
-  });
-
-  // Weekly total per product
   const finalData = {};
   let matched=0, total=0;
-  productCodes.forEach(code=>{
-    if(adjustedTotals[code]>0){
-      finalData[code]=adjustedTotals[code];
+
+  productCodes.forEach(code => {
+    const dayData = byCodeByDay[code];
+    const dates = dateCols.map(d=>d.date);
+    const actualTotal = dates.reduce((s,d)=>s+(dayData[d]||0), 0);
+    if(actualTotal > 0){
+      finalData[code] = Math.round(actualTotal);
       if(allProducts().find(p=>p.code===code)) matched++;
       total++;
     }
   });
 
   slog('✅ Товаров с продажами: '+total+' (совпало с базой: '+matched+')','ok');
-  if(totalAdjusted>0) slog('📈 Восстановлено упущенных продаж: '+totalAdjusted+' позиций','ok');
 
   // Preview top products
   const topProds = allProducts().filter(p=>finalData[p.code]>0)
@@ -3142,6 +3105,14 @@ function applySalesImport(){
   if(!pendingSalesImport)return;
   const data = pendingSalesImport.data;
   // Aggregate by product: push weekly total into salesHistory
+  // Use filename+date as dedup key to prevent same file loaded twice
+  const periodKey = pendingSalesImport.file + '_' + (pendingSalesImport.ts||'').substring(0,10);
+  const loadedPeriods = JSON.parse(localStorage.getItem('kp_loaded_periods')||'[]');
+  if(loadedPeriods.includes(periodKey)){
+    toast('⚠️ Этот файл уже загружен в историю. Очистите историю если хотите загрузить заново.','warn');
+    pendingSalesImport=null;
+    return;
+  }
   allProducts().forEach(p=>{
     if(!salesHistory[p.code])salesHistory[p.code]=[];
     const qty = data[p.code]||0;
@@ -3149,6 +3120,10 @@ function applySalesImport(){
     if(salesHistory[p.code].length>12)salesHistory[p.code].shift(); // keep 12 weeks max
   });
   localStorage.setItem('kp_sales_hist',JSON.stringify(salesHistory));
+  // Mark this period as loaded
+  loadedPeriods.push(periodKey);
+  if(loadedPeriods.length>24) loadedPeriods.shift();
+  localStorage.setItem('kp_loaded_periods',JSON.stringify(loadedPeriods));
   // Sync full salesHistory object to Supabase settings table
   syncSettingToDB('kp_sales_hist', salesHistory);
 
@@ -3160,6 +3135,9 @@ function applySalesImport(){
     changes:['История продаж из 1С: '+pendingSalesImport.file+' ('+count+' позиций)']});
   updateSalesHistCount();
   buildABCCache();
+  // Warn if same file loaded multiple times
+  const maxPeriods = Math.max(0, ...Object.values(salesHistory).map(a=>a.length));
+  if(maxPeriods > 8) slog('⚠️ В истории '+maxPeriods+' периодов — рекомендуем очистить и загрузить заново','w');
   if(currentUser)renderInputTable();
   renderDash();
   closeModal('salesModal');
@@ -3171,6 +3149,7 @@ function clearSalesHist(){
   if(!confirm('Очистить всю историю продаж?'))return;
   salesHistory={};
   localStorage.removeItem('kp_sales_hist');
+  localStorage.removeItem('kp_loaded_periods');
   updateSalesHistCount();
   toast('История продаж очищена','warn');
 }
@@ -3415,12 +3394,30 @@ function checkUnassignedCats(){
 //  SAFETY STOCK SETTINGS — by category
 // ═══════════════════════════════════════════════════════
 
-// Default safety by category (20% for all)
+// Default safety by CATEGORY (сырьё)
 const DEFAULT_CAT_SAFETY = {
   'Индейка':50,'Курица':50,'Лосось':50,
   'Кролик':30,'Телятина':30,'Овощи':20,
   'Творог':20,'Брынза':20,'Другое':20,
 };
+
+// Default safety by GROUP (тип продукта) — overrides category if set
+// null = not set (use category safety instead)
+const DEFAULT_GROUP_SAFETY = {
+  'Пельмени/манты/вареники': 40,
+  'Котлеты/тефтели/фрикадельки': null,
+  'Family Plate': null,
+  'Сырники/выпечка': null,
+};
+
+function getGroupSafety(){
+  const saved = localStorage.getItem('kp_group_safety');
+  return saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(DEFAULT_GROUP_SAFETY));
+}
+function saveGroupSafety(obj){
+  localStorage.setItem('kp_group_safety', JSON.stringify(obj));
+  syncSettingToDB('kp_group_safety', obj);
+}
 
 function getCatSafety(){
   const saved = localStorage.getItem('kp_cat_safety');
@@ -3432,48 +3429,110 @@ function saveCatSafety(obj){
   syncSettingToDB('kp_cat_safety', obj);
 }
 
-// Override getSafetyMultiplier to use category-based settings
+// getSafetyMultiplier: GROUP > CATEGORY > ABC
 function getSafetyMultiplier(code){
   const p = allProducts().find(x=>x.code===code);
   if(!p) return 1.2;
+
+  // 1. Check group-level safety first
+  const groupSafety = getGroupSafety();
+  if(p.group && groupSafety[p.group] !== null && groupSafety[p.group] !== undefined){
+    return 1 + groupSafety[p.group]/100;
+  }
+
+  // 2. Category-level safety
   const catSafety = getCatSafety();
-  // Use category safety if set, otherwise fall back to ABC
   if(catSafety[p.cat] !== undefined){
     return 1 + catSafety[p.cat]/100;
   }
+
+  // 3. ABC fallback
   const abcSafety = getAbcSafety();
   return abcSafety[getABCClass(code)] || 1.2;
 }
 
 function renderSafetyInputs(){
   const catSafety = getCatSafety();
+  const groupSafety = getGroupSafety();
   const cats = [...new Set([...Object.keys(DEFAULT_CAT_SAFETY), ...getAllCats()])];
-  document.getElementById('safetyInputs').innerHTML = cats.map(cat => {
-    const pct = catSafety[cat] !== undefined ? catSafety[cat] : 20;
-    const color = CC[cat] || '#8a93b0';
-    const safeId = 'sv-'+cat.replace(/[^a-zа-яёА-ЯЁ]/gi,'_');
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)">
-      <span class="mpill" style="background:${color}22;color:${color};min-width:80px;justify-content:center">${cat}</span>
-      <input type="range" min="0" max="100" value="${pct}" step="5"
-        style="flex:1;accent-color:${color}"
-        oninput="document.getElementById('${safeId}').value=this.value;this.nextElementSibling.textContent=this.value+'%'">
-      <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${color};min-width:36px">${pct}%</span>
-      <input type="number" id="${safeId}" min="0" max="200" value="${pct}" data-cat="${cat}"
+  const groups = [...new Set([...Object.keys(DEFAULT_GROUP_SAFETY), ...allProducts().map(p=>p.group).filter(Boolean)])];
+
+  const makeRow = (label, id, pct, color, dataAttr, isOff) => {
+    const safeId = id.replace(/[^a-zA-Zа-яёА-ЯЁ0-9]/gi,'_');
+    const displayPct = isOff ? '—' : pct;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid ${isOff?'var(--border)':'rgba('+hexToRgb(color)+',0.3)'};">
+      <span style="font-size:10px;font-weight:700;color:${isOff?'var(--text3)':color};min-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${label}">${label}</span>
+      <input type="range" min="-1" max="100" value="${isOff?-1:pct}" step="5"
+        style="flex:1;accent-color:${color};opacity:${isOff?0.4:1}"
+        oninput="updateSafetyRow('${safeId}',this.value)">
+      <span id="sl-${safeId}" style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${color};min-width:36px">${isOff?'откл':pct+'%'}</span>
+      <input type="number" id="${safeId}" min="-1" max="200" value="${isOff?-1:pct}" ${dataAttr}
         style="width:52px;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:3px 5px;color:${color};font-family:'JetBrains Mono',monospace;font-size:11px;text-align:center;outline:none"
-        oninput="this.previousElementSibling.previousElementSibling.value=this.value;this.previousElementSibling.textContent=this.value+'%'">
-      <span style="font-size:10px;color:var(--text3)">%</span>
+        oninput="updateSafetyRow('${safeId}',this.value)">
+      <span style="font-size:9px;color:var(--text3)">${isOff?'(по кат.)':'%'}</span>
     </div>`;
-  }).join('');
+  };
+
+  const groupSection = `<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin:10px 0 6px;display:flex;align-items:center;gap:8px">
+    📦 По группам товаров <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(приоритет выше категории; -1 = отключено)</span>
+  </div>`
+  + groups.map(g => {
+      const val = groupSafety[g];
+      const isOff = val === null || val === undefined;
+      const pct = isOff ? 20 : val;
+      const color = '#a78bfa';
+      return makeRow(g, 'sg-'+g, pct, color, `data-group="${g}"`, isOff);
+    }).join('');
+
+  const catSection = `<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin:12px 0 6px">
+    🥩 По категориям сырья
+  </div>`
+  + cats.map(cat => {
+      const pct = catSafety[cat] !== undefined ? catSafety[cat] : 20;
+      const color = CC[cat] || '#8a93b0';
+      return makeRow(cat, 'sv-'+cat, pct, color, `data-cat="${cat}"`, false);
+    }).join('');
+
+  document.getElementById('safetyInputs').innerHTML = groupSection + catSection;
+}
+
+function hexToRgb(hex){
+  hex = hex.replace('#','');
+  if(hex.length===3) hex=hex.split('').map(x=>x+x).join('');
+  const r=parseInt(hex.substring(0,2),16), g=parseInt(hex.substring(2,4),16), b=parseInt(hex.substring(4,6),16);
+  return isNaN(r)?'79,142,247':`${r},${g},${b}`;
+}
+
+function updateSafetyRow(safeId, val){
+  const numVal = Number(val);
+  const labelEl = document.getElementById('sl-'+safeId);
+  const numEl = document.getElementById(safeId);
+  if(labelEl) labelEl.textContent = numVal < 0 ? 'откл' : numVal+'%';
+  if(numEl && numEl !== document.activeElement) numEl.value = val;
+  // Update range sibling
+  const row = numEl?.closest('div');
+  if(row){ const range = row.querySelector('input[type=range]'); if(range && range !== document.activeElement) range.value = val; }
 }
 
 function saveSafetySettings(){
-  const newSafety = {};
+  // Save category safety
+  const newCatSafety = {};
   document.querySelectorAll('#safetyInputs input[data-cat]').forEach(inp=>{
-    newSafety[inp.dataset.cat] = Number(inp.value)||0;
+    newCatSafety[inp.dataset.cat] = Number(inp.value)||0;
   });
-  saveCatSafety(newSafety);
+  saveCatSafety(newCatSafety);
+
+  // Save group safety (null if value is -1 = disabled)
+  const newGroupSafety = {};
+  document.querySelectorAll('#safetyInputs input[data-group]').forEach(inp=>{
+    const val = Number(inp.value);
+    newGroupSafety[inp.dataset.group] = val < 0 ? null : val;
+  });
+  saveGroupSafety(newGroupSafety);
+
   closeModal('safetyModal');
-  toast('✅ Страховой запас сохранён по категориям');
+  const groupsSet = Object.entries(newGroupSafety).filter(([,v])=>v!==null).length;
+  toast('✅ Запас сохранён: '+groupsSet+' групп + '+Object.keys(newCatSafety).length+' категорий');
   if(planResult){
     const needs=calcNeeds();
     const activeDaysList=DAYS.filter(d=>activeDays[d.key]);
@@ -3483,17 +3542,15 @@ function saveSafetySettings(){
 }
 
 function setSafetyAll(pct){
-  document.querySelectorAll('#safetyInputs input[data-cat]').forEach(inp=>{
-    inp.value=pct;
-    const rangeEl=inp.previousElementSibling.previousElementSibling;
-    const labelEl=inp.previousElementSibling;
-    if(rangeEl) rangeEl.value=pct;
-    if(labelEl) labelEl.textContent=pct+'%';
+  document.querySelectorAll('#safetyInputs input[data-cat], #safetyInputs input[data-group]').forEach(inp=>{
+    updateSafetyRow(inp.id, pct);
+    inp.value = pct;
   });
 }
 
 function resetSafetySettings(){
   saveCatSafety(JSON.parse(JSON.stringify(DEFAULT_CAT_SAFETY)));
+  saveGroupSafety(JSON.parse(JSON.stringify(DEFAULT_GROUP_SAFETY)));
   renderSafetyInputs();
   toast('Сброшено на значения по умолчанию','warn');
 }

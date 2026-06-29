@@ -1891,18 +1891,19 @@ function calcNeeds() {
 
     const safetyMult = getSafetyMultiplier(p.code);
     const abcClass = getABCClass(p.code);
+    const safetyPct = safetyMult - 1; // e.g. 0.5 for 50%
 
-    // ── Coverage period: demand must last until the NEXT production day ──
-    // Find how many days until next scheduled production day for this category
-    // (covers current week's remaining days + days into next week before next production)
+    // ── Coverage period: how many days this batch must last ──
+    // (until the next scheduled production day for this category)
     const coverageDays = getCoverageDays(p.cat);
-    const dailyDemand = effectiveDemand / 7; // assume weekly demand spread evenly
-    const coverageDemand = dailyDemand * coverageDays;
+    const dailyDemand = effectiveDemand / 7; // weekly demand spread evenly per day
+    const periodDemand = dailyDemand * coverageDays; // total demand for the FULL coverage period
 
-    // Use the LARGER of: this week's safety-adjusted demand, OR coverage-period demand
-    const weeklyNeeded = Math.ceil(effectiveDemand * safetyMult);
-    const coverageNeeded = Math.ceil(coverageDemand * safetyMult);
-    const targetStock = Math.max(weeklyNeeded, coverageNeeded);
+    // Target stock = demand for the whole period + safety buffer to survive until next production
+    // This correctly handles cases where current stock looks "enough" for this week
+    // but will run out before the NEXT production day arrives.
+    const safetyBuffer = Math.ceil(periodDemand * safetyPct);
+    const targetStock = Math.ceil(periodDemand) + safetyBuffer;
 
     const needed = Math.max(0, targetStock - st);
 

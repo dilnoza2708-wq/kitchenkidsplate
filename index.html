@@ -770,6 +770,33 @@ function getMeatSchedule() {
 }
 
 // Returns CAT→[days] mapping
+// Days of coverage needed: from this production day until NEXT production day for category
+// Default: 7 days (one full week) if category produced once a week
+// If produced multiple times a week, coverage = gap between production days
+function getCoverageDays(cat){
+  const sched = getMeatSchedule();
+  const dayOrder = ['mon','tue','wed','thu','fri','sat','sun'];
+  // Find all days this category is scheduled
+  const prodDays = [];
+  dayOrder.forEach((day, idx) => {
+    if(sched[day]?.includes(cat)) prodDays.push(idx);
+  });
+  if(prodDays.length === 0) return 7; // not scheduled — assume weekly default
+  if(prodDays.length === 1){
+    // Produced once a week — must cover full 7 days until same day next week
+    return 7;
+  }
+  // Multiple production days — coverage = max gap between consecutive days (wrapping)
+  let maxGap = 0;
+  for(let i=0; i<prodDays.length; i++){
+    const cur = prodDays[i];
+    const next = prodDays[(i+1) % prodDays.length];
+    const gap = next > cur ? next - cur : (7 - cur) + next;
+    if(gap > maxGap) maxGap = gap;
+  }
+  return maxGap;
+}
+
 function getCatDay() {
   const map = {};
   const sched = getMeatSchedule();
@@ -1864,12 +1891,26 @@ function calcNeeds() {
 
     const safetyMult = getSafetyMultiplier(p.code);
     const abcClass = getABCClass(p.code);
-    const needed = Math.max(0, Math.ceil(effectiveDemand * safetyMult) - st);
+
+    // ── Coverage period: demand must last until the NEXT production day ──
+    // Find how many days until next scheduled production day for this category
+    // (covers current week's remaining days + days into next week before next production)
+    const coverageDays = getCoverageDays(p.cat);
+    const dailyDemand = effectiveDemand / 7; // assume weekly demand spread evenly
+    const coverageDemand = dailyDemand * coverageDays;
+
+    // Use the LARGER of: this week's safety-adjusted demand, OR coverage-period demand
+    const weeklyNeeded = Math.ceil(effectiveDemand * safetyMult);
+    const coverageNeeded = Math.ceil(coverageDemand * safetyMult);
+    const targetStock = Math.max(weeklyNeeded, coverageNeeded);
+
+    const needed = Math.max(0, targetStock - st);
+
     // Average weekly sales from 1C history
     const shArr = salesHistory[p.code] || [];
     const nonZero = shArr.filter(v=>v>0);
     const avgSales = nonZero.length ? Math.round(nonZero.reduce((s,v)=>s+v,0)/nonZero.length) : 0;
-    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, avgSales, o };
+    return { ...p, orderTotal, forecast, effectiveDemand, demandSource, extraOrder, st, needed, safetyMult, abcClass, avgSales, coverageDays, o };
   }).filter(p => (p.effectiveDemand > 0 || p.orderTotal > 0) && !stopList.has(p.code));
 }
 
@@ -2058,11 +2099,12 @@ function renderPlan(needs,activeDaysList){
     <th class="c" style="color:#a78bfa">Прогноз</th>
     <th class="c">ABC</th>
     <th class="c" title="Страховой запас по ABC классу">Запас%</th>
+    <th class="c" title="На сколько дней должен хватить остаток до следующего производства">Покрытие</th>
     <th class="c">Склад</th><th class="c">К пр-ву</th>
     ${activeDaysList.map(d=>`<th class="c" style="color:${d.color}">${d.name}<br><span style="font-size:8px;color:var(--text3)">${d.meat.split(',')[0]}</span></th>`).join('')}
   </tr></thead><tbody>`;
   for(const g of groups){
-    h+=`<tr class="crow"><td colspan="${7+activeDaysList.length}">${g}</td></tr>`;
+    h+=`<tr class="crow"><td colspan="${8+activeDaysList.length}">${g}</td></tr>`;
     const groupKey = sortMode==='cat' ? 'cat' : sortMode==='qty' ? null : 'group';
     const groupItems = groupKey ? sortedNeeds.filter(x=>x[groupKey]===g) : sortedNeeds;
     for(const p of groupItems){
@@ -2087,6 +2129,7 @@ function renderPlan(needs,activeDaysList){
         <td style="text-align:center"><span class="bdg b-or">${p.effectiveDemand}</span>${extraTag}</td>
         <td style="text-align:center"><span class="bdg" style="background:${p.abcClass==='A'?'rgba(45,217,143,.12)':p.abcClass==='B'?'rgba(79,142,247,.1)':'rgba(240,82,82,.1)'};color:${p.abcClass==='A'?'var(--green)':p.abcClass==='B'?'var(--accent)':'var(--red)'}">${p.abcClass||'B'}</span></td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.abcClass==='A'?'var(--orange)':p.abcClass==='B'?'var(--text2)':'var(--text3)'}">${p.safetyMult?Math.round((p.safetyMult-1)*100)+'%':'20%'}</td>
+        <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text3)" title="Остаток должен хватить на N дней до след. производства">${p.coverageDays||7}д</td>
         <td style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:${p.st<15?'var(--red)':'var(--text2)'}">${p.st}</td>
         <td style="text-align:center"><span class="bdg ${p.needed>0?'b-gr':'b-dm'}">${p.needed>0?p.needed:'—'}</span></td>
         ${activeDaysList.map(d=>{
